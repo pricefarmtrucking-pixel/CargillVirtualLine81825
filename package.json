@@ -1,7 +1,7 @@
 {
   "name": "cargill-virtual-line",
   "version": "1.0.0",
-  "description": "Cargill Soybean Virtual Line",
+  "description": "Cargill Soybean — Virtual Line app",
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
@@ -9,11 +9,15 @@
     "migrate": "node migrate.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
+    "better-sqlite3": "^9.4.0",
     "cookie-parser": "^1.4.6",
-    "dotenv": "^16.4.0",
-    "twilio": "^4.21.0",
-    "better-sqlite3": "^9.4.0"
-  }
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "uuid": "^9.0.1"
+  },
+  "engines": {
+    "node": ">=18.x"
+  },
+  "author": "",
+  "license": "MIT"
 }
