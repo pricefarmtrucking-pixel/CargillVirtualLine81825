@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "description": "Cargill Soybean Virtual Line Scheduling App",
   "main": "index.js",
-  "type": "commonjs",
   "scripts": {
     "start": "node index.js",
     "migrate": "node migrate.js",
@@ -19,7 +18,7 @@
     "nodemon": "^3.1.0"
   },
   "engines": {
-    "node": "20.x"
+    "node": "20.11.x"
   },
   "author": "Price Farm Trucking LLC",
   "license": "MIT"
