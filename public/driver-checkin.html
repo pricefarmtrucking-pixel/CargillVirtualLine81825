@@ -1,0 +1,49 @@
+<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Driver Check-In — Cargill Soybean</title><style>
+:root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
+.container { max-width: 1100px; margin: 5vh auto; padding: 0 1rem; }
+.card { border:1px solid #ddd; border-radius:12px; padding:1.25rem; background:#fff; box-shadow: 0 2px 12px rgba(0,0,0,.03); }
+.header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 1rem; }
+.brand { font-weight: 800; letter-spacing:.2px; }
+.actions a, .actions button { margin-right:.5rem; }
+.button { padding:.6rem 1rem; border:none; border-radius:10px; cursor:pointer; text-decoration:none; display:inline-block; }
+.button.primary { background:#1e90ff; color:#fff; }
+.button.ghost { background:#f7f7f7; color:#222; border:1px solid #ddd; }
+.small { color:#555; font-size:.95rem; }
+.kbd { font-family: ui-monospace, Menlo, Consolas, monospace; background:#f3f3f3; padding:.15rem .35rem; border-radius:6px; border:1px solid #e6e6e6; }
+.callout { padding:.75rem; border:1px dashed #cfe3ff; border-radius:10px; background:#f7fbff; }
+.link { color:#1e90ff; text-decoration:none; }
+.input { width:100%; padding:.7rem .8rem; border:1px solid #ccc; border-radius:10px; }
+.row6 { display:grid; grid-template-columns: repeat(6,1fr); gap:.4rem; }
+.code { font-family: ui-monospace, Menlo, Consolas, monospace; text-align:center; }
+.slotgrid { display:grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap:.5rem; margin-top:.75rem; }
+.slot { padding:.45rem .6rem; border:1px solid #ddd; border-radius:999px; display:inline-flex; gap:.5rem; align-items:center; }
+.count { font-variant-numeric: tabular-nums; }
+.table { width:100%; border-collapse: collapse; }
+.table th, .table td { padding:.55rem .6rem; border-bottom:1px solid #eee; text-align:left; }
+.sticky { position:sticky; top:0; background:#fff; z-index:1; }
+</style></head>
+<body><div class="container">
+  <div class="header"><div class="brand">Cargill Soybean — Virtual Line</div>
+    <div class="actions"><a class="button ghost" href="index.html">Home</a><a class="button primary" href="queue-board.html">Live Queue</a></div>
+  </div>
+  <div class="card">
+    <h2>Driver Check-In</h2>
+    <p class="small">Fill out all required fields. Choose your dumping location.</p>
+    <div style="display:flex; gap:.5rem; flex-wrap:wrap; margin-bottom:.5rem;">
+      <span class="kbd">East</span><span class="kbd">West</span>
+    </div>
+    <form>
+      <div style="display:grid; gap:.8rem; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));">
+        <div><label>License Plate *</label><input class="input" placeholder="IA HFG-210"/></div>
+        <div><label>Beans Sold Thru (Vendor Name) *</label><input class="input" placeholder="e.g., Cargill / Co-op / Broker"/></div>
+        <div><label>Farm Name OR Ticket # *</label><input class="input" placeholder="e.g., Smith Family Farms OR 123456"/></div>
+        <div><label>Carrier</label><input class="input" placeholder="Carrier LLC"/></div>
+        <div><label>Driver Name *</label><input class="input" placeholder="Jane Doe"/></div>
+        <div><label>Driver Phone *</label><input class="input" placeholder="(555) 555-5555"/></div>
+        <div><label>Estimated Amount *</label><div style="display:flex; gap:.5rem;"><input class="input" type="number" placeholder="e.g., 950" style="max-width:200px"/><select class="input" style="max-width:160px"><option>Bushels</option><option>Tons</option></select></div></div>
+      </div>
+      <div style="margin-top:1rem"><button class="button primary" type="button">Join Queue</button><span class="small" style="margin-left:.5rem;">This is a static mockup.</span></div>
+    </form>
+  </div>
+</div></body></html>

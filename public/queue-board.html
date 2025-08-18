@@ -1,0 +1,41 @@
+<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Live Queue — Cargill Soybean</title><style>
+:root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
+.container { max-width: 1100px; margin: 5vh auto; padding: 0 1rem; }
+.card { border:1px solid #ddd; border-radius:12px; padding:1.25rem; background:#fff; box-shadow: 0 2px 12px rgba(0,0,0,.03); }
+.header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 1rem; }
+.brand { font-weight: 800; letter-spacing:.2px; }
+.actions a, .actions button { margin-right:.5rem; }
+.button { padding:.6rem 1rem; border:none; border-radius:10px; cursor:pointer; text-decoration:none; display:inline-block; }
+.button.primary { background:#1e90ff; color:#fff; }
+.button.ghost { background:#f7f7f7; color:#222; border:1px solid #ddd; }
+.small { color:#555; font-size:.95rem; }
+.kbd { font-family: ui-monospace, Menlo, Consolas, monospace; background:#f3f3f3; padding:.15rem .35rem; border-radius:6px; border:1px solid #e6e6e6; }
+.callout { padding:.75rem; border:1px dashed #cfe3ff; border-radius:10px; background:#f7fbff; }
+.link { color:#1e90ff; text-decoration:none; }
+.input { width:100%; padding:.7rem .8rem; border:1px solid #ccc; border-radius:10px; }
+.row6 { display:grid; grid-template-columns: repeat(6,1fr); gap:.4rem; }
+.code { font-family: ui-monospace, Menlo, Consolas, monospace; text-align:center; }
+.slotgrid { display:grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap:.5rem; margin-top:.75rem; }
+.slot { padding:.45rem .6rem; border:1px solid #ddd; border-radius:999px; display:inline-flex; gap:.5rem; align-items:center; }
+.count { font-variant-numeric: tabular-nums; }
+.table { width:100%; border-collapse: collapse; }
+.table th, .table td { padding:.55rem .6rem; border-bottom:1px solid #eee; text-align:left; }
+.sticky { position:sticky; top:0; background:#fff; z-index:1; }
+</style></head>
+<body><div class="container">
+  <div class="header"><div class="brand">Cargill Soybean — Virtual Line</div>
+    <div class="actions"><a class="button ghost" href="index.html">Home</a><a class="button primary" href="scale-verify.html">Scale Verify</a></div></div>
+  <div class="card">
+    <h2>Live Queue (East)</h2>
+    <table class="table">
+      <thead><tr><th># (Scale Code)</th><th>Plate</th><th>Driver</th><th>Carrier</th><th>Status</th><th>Since</th></tr></thead>
+      <tbody>
+        <tr><td class="kbd">2047</td><td>IA HFG-210</td><td>B. Singh</td><td>Midwest Haul</td><td>QUEUED</td><td>08:15</td></tr>
+        <tr><td class="kbd">7312</td><td>MO 8JK-330</td><td>S. Kim</td><td>-</td><td>CALLED</td><td>08:18</td></tr>
+        <tr><td class="kbd">0193</td><td>NE 2AB-112</td><td>R. Patel</td><td>Patel Ag</td><td>AT_DOCK</td><td>08:20</td></tr>
+      </tbody>
+    </table>
+    <p class="small">Drivers: give this 4‑digit code at the scale to verify your check‑in time.</p>
+  </div>
+</div></body></html>

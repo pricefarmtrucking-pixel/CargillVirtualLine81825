@@ -1,0 +1,74 @@
+<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Cargill Soybean — Virtual Line</title><style>
+:root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
+.container { max-width: 1100px; margin: 5vh auto; padding: 0 1rem; }
+.card { border:1px solid #ddd; border-radius:12px; padding:1.25rem; background:#fff; box-shadow: 0 2px 12px rgba(0,0,0,.03); }
+.header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 1rem; }
+.brand { font-weight: 800; letter-spacing:.2px; }
+.actions a, .actions button { margin-right:.5rem; }
+.button { padding:.6rem 1rem; border:none; border-radius:10px; cursor:pointer; text-decoration:none; display:inline-block; }
+.button.primary { background:#1e90ff; color:#fff; }
+.button.ghost { background:#f7f7f7; color:#222; border:1px solid #ddd; }
+.small { color:#555; font-size:.95rem; }
+.kbd { font-family: ui-monospace, Menlo, Consolas, monospace; background:#f3f3f3; padding:.15rem .35rem; border-radius:6px; border:1px solid #e6e6e6; }
+.callout { padding:.75rem; border:1px dashed #cfe3ff; border-radius:10px; background:#f7fbff; }
+.link { color:#1e90ff; text-decoration:none; }
+.input { width:100%; padding:.7rem .8rem; border:1px solid #ccc; border-radius:10px; }
+.row6 { display:grid; grid-template-columns: repeat(6,1fr); gap:.4rem; }
+.code { font-family: ui-monospace, Menlo, Consolas, monospace; text-align:center; }
+.slotgrid { display:grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap:.5rem; margin-top:.75rem; }
+.slot { padding:.45rem .6rem; border:1px solid #ddd; border-radius:999px; display:inline-flex; gap:.5rem; align-items:center; }
+.count { font-variant-numeric: tabular-nums; }
+.table { width:100%; border-collapse: collapse; }
+.table th, .table td { padding:.55rem .6rem; border-bottom:1px solid #eee; text-align:left; }
+.sticky { position:sticky; top:0; background:#fff; z-index:1; }
+</style></head>
+<body><div class="container">
+  <div class="header"><div class="brand">Cargill Soybean — Virtual Line</div>
+    <div class="actions">
+      <a class="button ghost" href="timeslots-select.html">Choose a Time</a>
+      <a class="button primary" href="driver-checkin.html">Driver Check-In</a>
+    </div></div>
+  <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">
+    <div class="card">
+      <h2>Welcome</h2>
+      <p class="small">Reserve a dumping time at the East or West plant, then check in on arrival.</p>
+      <div class="callout" style="margin-top:.75rem;">
+        <strong>Prefer to book by phone?</strong><br/>
+        Call the facility at <a class="link" href="tel:(555) 123-4567">(555) 123-4567</a> to book a time over the phone.<br/>
+        Alternatively, contact your vendor and ask them to schedule a time on your behalf.
+      </div>
+      <div class="small" style="margin-top:.75rem;">Need help later? Save our number: <span class="kbd">(555) 123-4567</span></div>
+    </div>
+    <div class="card">
+      <h2>Driver Sign-In</h2>
+      <p class="small">Enter your mobile number to receive a one-time code.</p>
+      <div><label>Mobile number</label><input id="phone" class="input" placeholder="(555) 555-5555"/>
+        <button class="button primary" style="margin-top:.6rem;" onclick="sendCode()">Send Code</button></div>
+      <div id="codeBox" style="margin-top:1rem; display:none;">
+        <label>Enter 6‑digit code</label>
+        <div class="row6" style="margin-top:.4rem;">
+          <input maxlength="1" class="input code"/><input maxlength="1" class="input code"/><input maxlength="1" class="input code"/>
+          <input maxlength="1" class="input code"/><input maxlength="1" class="input code"/><input maxlength="1" class="input code"/>
+        </div>
+        <button class="button primary" style="margin-top:.6rem;" onclick="verify()">Verify & Continue</button>
+        <div class="small" style="margin-top:.6rem;">On verify, we’ll unlock booking and check-in features.</div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+function sendCode(){
+  const phone = document.getElementById('phone').value.trim();
+  if (!phone) return alert('Enter your phone number');
+  // mock send; real app calls /auth/request-code
+  sessionStorage.setItem('phone', phone);
+  document.getElementById('codeBox').style.display = 'block';
+}
+function verify(){
+  // mock verify success; real app calls /auth/verify
+  sessionStorage.setItem('session', 'ok');
+  window.location.href = 'timeslots-select.html';
+}
+</script>
+</body></html>

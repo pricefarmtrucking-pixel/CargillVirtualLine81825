@@ -1,0 +1,92 @@
+<!doctype html><html><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Facility — Appointments</title>
+<style>
+:root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
+.container { max-width: 1100px; margin: 5vh auto; padding: 0 1rem; }
+.card { border:1px solid #ddd; border-radius:12px; padding:1.25rem; background:#fff; box-shadow: 0 2px 12px rgba(0,0,0,.03); }
+.header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 1rem; }
+.brand { font-weight: 800; letter-spacing:.2px; }
+.actions a, .actions button { margin-right:.5rem; }
+.button { padding:.6rem 1rem; border:none; border-radius:10px; cursor:pointer; text-decoration:none; display:inline-block; }
+.button.primary { background:#1e90ff; color:#fff; }
+.button.ghost { background:#f7f7f7; color:#222; border:1px solid #ddd; }
+.small { color:#555; font-size:.95rem; }
+.kbd { font-family: ui-monospace, Menlo, Consolas, monospace; background:#f3f3f3; padding:.15rem .35rem; border:1px solid #e6e6e6; }
+.table { width:100%; border-collapse: collapse; }
+.table th, .table td { padding:.55rem .6rem; border-bottom:1px solid #eee; text-align:left; }
+.sticky { position:sticky; top:0; background:#fff; z-index:1; }
+.modal { position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; padding:1rem; }
+.modal .dialog { background:#fff; border-radius:12px; padding:1rem; max-width:560px; width:100%; }
+</style></head>
+<body><div class="container">
+  <div class="header"><div class="brand">Cargill Soybean — Facility</div>
+    <div class="actions"><a class="button ghost" href="facility-schedule.html">Schedule Builder</a><a class="button primary" href="index.html">Driver Site</a></div></div>
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <h2>Appointments — 2025-08-11 (East)</h2>
+      <div style="display:flex; gap:.5rem;">
+        <button class="button ghost" onclick="massCancel()">Mass Cancel</button>
+        <button class="button primary" onclick="refresh()">Refresh</button>
+      </div>
+    </div>
+    <div style="display:grid; grid-template-columns: repeat(4, minmax(180px,1fr)); gap:.75rem; margin:.25rem 0 1rem;">
+      <div><label>Site</label><select id="site" class="input"><option value="EAST" selected>East</option><option value="WEST">West</option></select></div>
+      <div><label>Date</label><input id="date" class="input" type="date" value="2025-08-11" /></div>
+      <div><label>Filter</label><select id="filter" class="input" onchange="render()"><option>All</option><option>Booked</option><option>Open Slots</option></select></div>
+      <div><label>Search</label><input id="q" class="input" placeholder="Name, plate, code..." oninput="render()"/></div>
+    </div>
+    <table class="table"><thead class="sticky"><tr><th><input type="checkbox" onclick="toggleAll(this)"/></th><th>Time</th><th>Driver</th><th>Plate</th><th>Vendor</th><th>Status</th><th>Actions</th></tr></thead><tbody id="tbody"></tbody></table>
+    <p class="small" style="margin-top:.5rem;">Showing 120 slots (07:00–17:00 every 5 min) with sample bookings.</p>
+  </div>
+</div>
+<div class="modal" id="modal"><div class="dialog">
+  <h3 id="modalTitle">Mass Cancel</h3>
+  <div id="modalBody" class="small">
+    <p>Selected appointments will be canceled. Reason:</p>
+    <select id="reason" class="input">
+      <option>Mechanical breakdown</option><option>Weather delay</option><option>Power outage</option><option>Staffing issue</option><option>Other</option>
+    </select>
+    <p style="margin-top:.5rem;">Optionally notify drivers via SMS.</p>
+    <div style="display:flex; gap:.5rem; margin-top:.5rem;"><button class="button primary" onclick="confirmMassCancel()">Confirm Cancel & Text</button><button class="button ghost" onclick="hideModal()">Close</button></div>
+  </div>
+</div></div>
+<script>
+const data = [
+  { time:'08:20', driver:'S. Kim', plate:'MO 8JK-330', vendor:'Co-op', status:'Booked' },
+  { time:'08:40', driver:'R. Patel', plate:'NE 2AB-112', vendor:'Patel Ag', status:'Booked' },
+  { time:'09:00', driver:'M. Reyes', plate:'KS 9PQ-990', vendor:'-', status:'Booked' },
+  { time:'09:20', driver:'J. Flores', plate:'TX 7HZ-292', vendor:'FloTrans', status:'Booked' },
+];
+const ALL_SLOTS = Array.from({length:120}, (_,i)=>{ const h=7+Math.floor(i*5/60); const m=(i*5)%60; return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0'); });
+
+function toggleAll(box){ document.querySelectorAll('#tbody input[type=checkbox]').forEach(cb => cb.checked = box.checked); }
+
+function render(){
+  const q = document.getElementById('q').value.toLowerCase();
+  const filter = document.getElementById('filter').value;
+  const bookedMap = new Map(data.map(r => [r.time, r]));
+  const rows = [];
+  for (const t of ALL_SLOTS){
+    if (bookedMap.has(t)){ const r = bookedMap.get(t); if (filter==='All' || filter==='Booked') rows.push(Object.assign({isOpen:false}, r)); }
+    else { if (filter==='All' || filter==='Open Slots') rows.push({time:t,driver:'-',plate:'-',vendor:'-',status:'Open',isOpen:true}); }
+  }
+  const filtered = rows.filter(r => (r.time+' '+r.driver+' '+r.plate+' '+r.vendor).toLowerCase().includes(q));
+  document.getElementById('tbody').innerHTML = filtered.map((r,i)=>`
+    <tr>
+      <td>${ r.isOpen ? '' : `<input type='checkbox' data-i='${i}'/>` }</td>
+      <td>${r.time}</td><td>${r.driver}</td><td>${r.plate}</td><td>${r.vendor}</td><td>${r.status}</td>
+      <td>${ r.isOpen ? `<button class='button' onclick="assignOpen('${r.time}')">Assign</button>` : `<button class='button' onclick='changeTime(${i})'>Change</button> <button class='button' onclick='cancelOne(${i})'>Cancel</button>` }</td>
+    </tr>`).join('');
+}
+
+function changeTime(i){ const newTime = prompt('Move to what time? (HH:MM)', '08:30'); if (!newTime) return; alert('Changed (mock) to '+newTime+'\nIn the app: POST /api/slots/reassign'); }
+function assignOpen(t){ alert('Assigned (mock) '+t+'\nIn the app: POST /api/slots/reserve or /reassign'); }
+function cancelOne(i){ if (!confirm('Cancel this appointment and notify the driver?')) return; alert('Canceled (mock).\nIn the app: POST /api/slots/cancel + SMS'); }
+function massCancel(){ const any = Array.from(document.querySelectorAll('#tbody input[type=checkbox]:checked')); if (!any.length) return alert('Select at least one'); document.getElementById('modal').style.display='flex'; }
+function hideModal(){ document.getElementById('modal').style.display='none'; }
+function confirmMassCancel(){ const reason = document.getElementById('reason').value; hideModal(); alert('Mass canceled (mock): '+reason+'\nIn the app: POST /api/slots/mass-cancel'); }
+function refresh(){ alert('Refreshed (mock) — would refetch /api/appointments and /api/sites/:id/slots'); }
+render();
+</script>
+</body></html>

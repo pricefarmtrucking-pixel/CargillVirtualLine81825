@@ -1,0 +1,67 @@
+<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Choose Time — Cargill Soybean</title><style>
+:root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
+.container { max-width: 1100px; margin: 5vh auto; padding: 0 1rem; }
+.card { border:1px solid #ddd; border-radius:12px; padding:1.25rem; background:#fff; box-shadow: 0 2px 12px rgba(0,0,0,.03); }
+.header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 1rem; }
+.brand { font-weight: 800; letter-spacing:.2px; }
+.actions a, .actions button { margin-right:.5rem; }
+.button { padding:.6rem 1rem; border:none; border-radius:10px; cursor:pointer; text-decoration:none; display:inline-block; }
+.button.primary { background:#1e90ff; color:#fff; }
+.button.ghost { background:#f7f7f7; color:#222; border:1px solid #ddd; }
+.small { color:#555; font-size:.95rem; }
+.kbd { font-family: ui-monospace, Menlo, Consolas, monospace; background:#f3f3f3; padding:.15rem .35rem; border-radius:6px; border:1px solid #e6e6e6; }
+.callout { padding:.75rem; border:1px dashed #cfe3ff; border-radius:10px; background:#f7fbff; }
+.link { color:#1e90ff; text-decoration:none; }
+.input { width:100%; padding:.7rem .8rem; border:1px solid #ccc; border-radius:10px; }
+.row6 { display:grid; grid-template-columns: repeat(6,1fr); gap:.4rem; }
+.code { font-family: ui-monospace, Menlo, Consolas, monospace; text-align:center; }
+.slotgrid { display:grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap:.5rem; margin-top:.75rem; }
+.slot { padding:.45rem .6rem; border:1px solid #ddd; border-radius:999px; display:inline-flex; gap:.5rem; align-items:center; }
+.count { font-variant-numeric: tabular-nums; }
+.table { width:100%; border-collapse: collapse; }
+.table th, .table td { padding:.55rem .6rem; border-bottom:1px solid #eee; text-align:left; }
+.sticky { position:sticky; top:0; background:#fff; z-index:1; }
+</style></head>
+<body><div class="container">
+  <div class="header"><div class="brand">Cargill Soybean — Virtual Line</div><div class="actions"><a class="button ghost" href="index.html">Home</a></div></div>
+  <div class="card">
+    <h2>Step 1: Choose a Time</h2>
+    <p class="small">We’ll hold your selection for <strong>2:00</strong> while you enter details on the next page.</p>
+    <div style="display:grid; grid-template-columns: 160px 160px 200px; gap:.5rem; align-items:end;">
+      <div><label>Site</label><select id="site" class="input"><option value="EAST">East</option><option value="WEST">West</option></select></div>
+      <div><label>Date</label><input id="date" class="input" type="date" value="2025-08-11" /></div>
+      <div><label>Optional ETA</label><input id="eta" class="input" type="time" value="09:30" /></div>
+    </div>
+    <div class="slotgrid" style="margin-top:.75rem;"><label class="slot"><input type="radio" name="slot" value="08:00" /><span>08:00</span></label>
+<label class="slot"><input type="radio" name="slot" value="08:10" /><span>08:10</span></label>
+<label class="slot"><input type="radio" name="slot" value="08:20" /><span>08:20</span></label>
+<label class="slot"><input type="radio" name="slot" value="08:30" /><span>08:30</span></label>
+<label class="slot"><input type="radio" name="slot" value="08:40" /><span>08:40</span></label>
+<label class="slot"><input type="radio" name="slot" value="08:50" /><span>08:50</span></label>
+<label class="slot"><input type="radio" name="slot" value="09:00" /><span>09:00</span></label>
+<label class="slot"><input type="radio" name="slot" value="09:10" /><span>09:10</span></label>
+<label class="slot"><input type="radio" name="slot" value="09:20" /><span>09:20</span></label>
+<label class="slot"><input type="radio" name="slot" value="09:30" /><span>09:30</span></label>
+<label class="slot"><input type="radio" name="slot" value="09:40" /><span>09:40</span></label>
+<label class="slot"><input type="radio" name="slot" value="09:50" /><span>09:50</span></label></div>
+    <div style="margin-top:1rem; display:flex; gap:.5rem; align-items:center; flex-wrap:wrap;">
+      <button class="button primary" type="button" onclick="holdAndContinue()">Hold Selected (2:00) & Continue</button>
+      <span class="small">This creates a temporary hold and sends you to Step 2.</span>
+    </div>
+  </div>
+</div>
+<script>
+function holdAndContinue(){
+  const site = document.getElementById('site').value;
+  const date = document.getElementById('date').value;
+  const slot = document.querySelector('input[name=slot]:checked');
+  if (!slot) return alert('Pick a time');
+  const token = Math.random().toString(36).slice(2);
+  const payload = { site, date, slot_time: slot.value, expires_at: Date.now() + 120000 };
+  sessionStorage.setItem('hold', JSON.stringify(payload));
+  sessionStorage.setItem('hold_token', token);
+  window.location.href = 'timeslots-driver.html?token=' + encodeURIComponent(token);
+}
+</script>
+</body></html>

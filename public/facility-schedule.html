@@ -1,0 +1,57 @@
+<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Facility — Schedule Builder</title><style>
+:root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
+.container { max-width: 1100px; margin: 5vh auto; padding: 0 1rem; }
+.card { border:1px solid #ddd; border-radius:12px; padding:1.25rem; background:#fff; box-shadow: 0 2px 12px rgba(0,0,0,.03); }
+.header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 1rem; }
+.brand { font-weight: 800; letter-spacing:.2px; }
+.actions a, .actions button { margin-right:.5rem; }
+.button { padding:.6rem 1rem; border:none; border-radius:10px; cursor:pointer; text-decoration:none; display:inline-block; }
+.button.primary { background:#1e90ff; color:#fff; }
+.button.ghost { background:#f7f7f7; color:#222; border:1px solid #ddd; }
+.small { color:#555; font-size:.95rem; }
+.kbd { font-family: ui-monospace, Menlo, Consolas, monospace; background:#f3f3f3; padding:.15rem .35rem; border-radius:6px; border:1px solid #e6e6e6; }
+.callout { padding:.75rem; border:1px dashed #cfe3ff; border-radius:10px; background:#f7fbff; }
+.link { color:#1e90ff; text-decoration:none; }
+.input { width:100%; padding:.7rem .8rem; border:1px solid #ccc; border-radius:10px; }
+.row6 { display:grid; grid-template-columns: repeat(6,1fr); gap:.4rem; }
+.code { font-family: ui-monospace, Menlo, Consolas, monospace; text-align:center; }
+.slotgrid { display:grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap:.5rem; margin-top:.75rem; }
+.slot { padding:.45rem .6rem; border:1px solid #ddd; border-radius:999px; display:inline-flex; gap:.5rem; align-items:center; }
+.count { font-variant-numeric: tabular-nums; }
+.table { width:100%; border-collapse: collapse; }
+.table th, .table td { padding:.55rem .6rem; border-bottom:1px solid #eee; text-align:left; }
+.sticky { position:sticky; top:0; background:#fff; z-index:1; }
+</style></head>
+<body><div class="container">
+  <div class="header"><div class="brand">Cargill Soybean — Facility</div>
+    <div class="actions"><a class="button ghost" href="facility-appointments.html">Appointments</a><a class="button primary" href="index.html">Driver Site</a></div></div>
+  <div class="card">
+    <h2>Build Time Slots</h2>
+    <p class="small">Generate single-capacity time slots. Minimum interval is <span class="kbd">5 min</span> (East) and <span class="kbd">6 min</span> (West).</p>
+    <div style="display:grid; grid-template-columns: repeat(4, minmax(180px,1fr)); gap:.75rem; align-items:end;">
+      <div><label>Site</label><select id="site" class="input" onchange="updateMin()"><option value="EAST">East</option><option value="WEST">West</option></select></div>
+      <div><label>Date</label><input id="date" class="input" type="date" value="2025-08-11" /></div>
+      <div><label>Open</label><input id="open" class="input" type="time" value="07:00" /></div>
+      <div><label>Close</label><input id="close" class="input" type="time" value="17:00" /></div>
+    </div>
+    <div style="display:grid; grid-template-columns: repeat(4, minmax(180px,1fr)); gap:.75rem; align-items:end; margin-top:.5rem;">
+      <div><label>Loads to Receive (per day)</label><input id="loads" class="input" type="number" value="80" min="1" /></div>
+      <div><label>Minimum Interval (auto)</label><input id="min" class="input" value="5 min (East)" disabled /></div>
+      <div><label>Computed Interval</label><input id="interval" class="input" value="—" disabled /></div>
+      <div style="display:flex; gap:.5rem;"><button class="button primary" onclick="generate()">Generate Slots</button><button class="button ghost" onclick="publish()">Publish Schedule</button></div>
+    </div>
+    <div id="summary" class="small" style="margin-top:.75rem;"></div>
+    <div id="slots" class="slotgrid"></div>
+  </div>
+</div>
+<script>
+function minutes(hhmm){ const [h,m] = hhmm.split(':').map(Number); return h*60+m; }
+function hhmm(min){ const h = String(Math.floor(min/60)).padStart(2,'0'); const m = String(min%60).padStart(2,'0'); return h+':'+m; }
+function updateMin(){ const site = document.getElementById('site').value; document.getElementById('min').value = site==='EAST' ? '5 min (East)' : '6 min (West)'; }
+function computeInterval(site, open, close, loads){ if (loads <= 1) return 0; const minInt = site==='EAST' ? 5 : 6; const dur = Math.max(0, minutes(close) - minutes(open)); const base = Math.floor(dur / (loads - 1)); return Math.max(minInt, base); }
+function generate(){ const site = document.getElementById('site').value; const date = document.getElementById('date').value; const open = document.getElementById('open').value; const close = document.getElementById('close').value; const loads = parseInt(document.getElementById('loads').value || '0', 10); const interval = computeInterval(site, open, close, loads); document.getElementById('interval').value = interval ? interval + ' min' : '—'; const start = minutes(open), end = minutes(close); const arr = []; if (loads >= 1) { for (let i=0;i<loads;i++) { const t = start + i*interval; if (t <= end) arr.push(hhmm(t)); } } document.getElementById('summary').innerHTML = `Generated <span class="kbd">${arr.length}</span> slots for <span class="kbd">${date}</span> at <span class="kbd">${site}</span>.`; document.getElementById('slots').innerHTML = arr.map(t => `<span class='slot'>${t}</span>`).join(''); }
+function publish(){ alert('Schedule published (mock). In the app, this calls POST /api/sites/:id/schedule and writes time_slots.'); }
+updateMin();
+</script>
+</body></html>
