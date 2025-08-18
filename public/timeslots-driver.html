@@ -1,1 +1,85 @@
-<!-- full updated timeslots-driver.html code -->
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Driver Info — Cargill Soybean</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
+    .container { max-width: 1100px; margin: 5vh auto; padding: 0 1rem; }
+    .card { border:1px solid #ddd; border-radius:12px; padding:1.25rem; background:#fff; }
+    .row { display:grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap:.5rem; margin:.5rem 0; }
+    input, select { padding:.55rem .6rem; border:1px solid #ccc; border-radius:8px; }
+    .button { padding:.55rem 1rem; border:1px solid #ddd; border-radius:10px; background:#f7f7f7; cursor:pointer; }
+    .button.primary { background:#1e90ff; color:#fff; border-color:#1e90ff; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h2>Step 2: Driver Information</h2>
+  <div id="meta" class="small"></div>
+  <div class="card">
+    <div class="row">
+      <input id="license_plate" placeholder="License Plate"/>
+      <input id="driver_name" placeholder="Driver Name"/>
+      <input id="driver_phone" placeholder="+1XXXXXXXXXX"/>
+      <input id="vendor_name" placeholder="Vendor/Co"/>
+    </div>
+    <div class="row">
+      <input id="farm_or_ticket" placeholder="Farm or Ticket #"/>
+      <input id="est_amount" type="number" placeholder="Amount"/>
+      <select id="est_unit">
+        <option>BUSHELS</option>
+        <option>TONS</option>
+      </select>
+      <div></div>
+    </div>
+    <div class="row" style="grid-template-columns:auto auto;">
+      <button class="button primary" onclick="confirmReservation()">Confirm Appointment</button>
+      <button class="button" onclick="release()">Cancel & Release Hold</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const qs = new URLSearchParams(location.search);
+const token = qs.get('token');
+const site_id = Number(qs.get('site_id')||1);
+const date = qs.get('date');
+const slot_time = qs.get('slot_time');
+document.getElementById('meta').textContent = `Held time: ${slot_time} • Site: ${site_id} • Date: ${date}`;
+
+function normalizePhone(p){ const d=String(p||'').replace(/\D/g,''); const m=d.match(/^1?(\d{10})$/); return m?`+1${m[1]}`:null; }
+
+async function confirmReservation(){
+  const body = {
+    hold_token: token,
+    license_plate: document.getElementById('license_plate').value||null,
+    driver_name: document.getElementById('driver_name').value||null,
+    driver_phone: normalizePhone(document.getElementById('driver_phone').value)||null,
+    vendor_name: document.getElementById('vendor_name').value||null,
+    farm_or_ticket: document.getElementById('farm_or_ticket').value||null,
+    est_amount: Number(document.getElementById('est_amount').value)||null,
+    est_unit: (document.getElementById('est_unit').value||'BUSHELS').toUpperCase()
+  };
+  try{
+    const r = await fetch('/api/slots/confirm', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+    const j = await r.json();
+    if (!r.ok || j.error){ alert('Confirm failed: '+(j.error||r.statusText)); return; }
+    alert('✅ Appointment confirmed! ID '+j.reservation_id);
+    location.href = 'index.html';
+  }catch(e){ alert('Network error: '+(e?.message||e)); }
+}
+
+async function release(){
+  try{
+    const r = await fetch('/api/slots/release', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ hold_token: token }) });
+    const j = await r.json();
+    if (!r.ok || j.error){ alert('Release failed: '+(j.error||r.statusText)); return; }
+    alert('Hold released.');
+    location.href = 'timeslots-select.html';
+  }catch(e){ alert('Network error: '+(e?.message||e)); }
+}
+</script>
+</body>
+</html>

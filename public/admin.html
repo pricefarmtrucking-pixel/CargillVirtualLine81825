@@ -1,1 +1,81 @@
-<!-- full updated admin.html code -->
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Admin — Cargill Soybean</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
+    .container { max-width: 900px; margin: 5vh auto; padding: 0 1rem; }
+    .card { border:1px solid #ddd; border-radius:12px; padding:1rem; background:#fff; margin-bottom:1rem; }
+    .row { display:grid; grid-template-columns: 1fr 1fr; gap:.5rem; }
+    input, textarea { width:100%; padding:.6rem .7rem; border:1px solid #ccc; border-radius:8px; }
+    .button { padding:.55rem 1rem; border:1px solid #ddd; border-radius:10px; background:#f7f7f7; cursor:pointer; }
+    .button.primary { background:#1e90ff; color:#fff; border-color:#1e90ff; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h2>Admin Tools</h2>
+
+  <div class="card">
+    <h3>Notify Only</h3>
+    <div class="row">
+      <input id="notify_id" placeholder="Reservation ID"/>
+      <input id="notify_msg" placeholder="Message"/>
+    </div>
+    <button class="button primary" onclick="notify()">Send SMS</button>
+    <div id="nmsg"></div>
+  </div>
+
+  <div class="card">
+    <h3>Cancel Single</h3>
+    <div class="row">
+      <input id="cancel_id" placeholder="Reservation ID"/>
+      <input id="cancel_reason" placeholder="Reason (optional)"/>
+    </div>
+    <button class="button" onclick="cancelOne()">Cancel & SMS</button>
+    <div id="cmsg"></div>
+  </div>
+
+  <div class="card">
+    <h3>Mass Cancel</h3>
+    <div class="row">
+      <input id="mc_site" placeholder="Site ID (1/2)"/>
+      <input id="mc_date" placeholder="YYYY-MM-DD"/>
+    </div>
+    <textarea id="mc_ids" rows="4" placeholder="Reservation IDs (comma-separated)"></textarea>
+    <div class="row">
+      <input id="mc_reason" placeholder="Reason"/>
+      <label><input type="checkbox" id="mc_notify"/> Notify drivers</label>
+    </div>
+    <button class="button" onclick="massCancel()">Mass Cancel</button>
+    <div id="mcmsg"></div>
+  </div>
+</div>
+
+<script>
+async function notify(){
+  const id = Number(document.getElementById('notify_id').value);
+  const message = document.getElementById('notify_msg').value;
+  const r = await fetch('/api/slots/notify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reservation_id:id,message})});
+  const j = await r.json(); document.getElementById('nmsg').textContent = JSON.stringify(j);
+}
+async function cancelOne(){
+  const reservation_id = Number(document.getElementById('cancel_id').value);
+  const reason = document.getElementById('cancel_reason').value;
+  const r = await fetch('/api/slots/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reservation_id,reason})});
+  const j = await r.json(); document.getElementById('cmsg').textContent = JSON.stringify(j);
+}
+async function massCancel(){
+  const site_id = Number(document.getElementById('mc_site').value);
+  const date = document.getElementById('mc_date').value;
+  const ids = document.getElementById('mc_ids').value.split(',').map(x=>Number(x.trim())).filter(Boolean);
+  const reason = document.getElementById('mc_reason').value;
+  const notify = document.getElementById('mc_notify').checked;
+  const r = await fetch('/api/slots/mass-cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({site_id,date,reservation_ids:ids,reason,notify})});
+  const j = await r.json(); document.getElementById('mcmsg').textContent = JSON.stringify(j);
+}
+</script>
+</body>
+</html>

@@ -1,1 +1,69 @@
-<!-- full updated timeslots-select.html code -->
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Choose a Time — Cargill Soybean</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
+    .container { max-width: 1100px; margin: 5vh auto; padding: 0 1rem; }
+    .slotgrid { display:grid; grid-template-columns: repeat(auto-fill, minmax(140px,1fr)); gap:.5rem; }
+    .slot { border:1px solid #ddd; border-radius:999px; padding:.5rem .7rem; text-align:center; cursor:pointer; }
+    .row { display:flex; gap:.5rem; align-items:center; }
+    .button { padding:.5rem .9rem; border:1px solid #ddd; border-radius:10px; background:#f7f7f7; cursor:pointer; }
+    .button.primary { background:#1e90ff; color:#fff; border-color:#1e90ff; }
+    input, select { padding:.5rem .6rem; border:1px solid #ccc; border-radius:8px; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h2>Choose a Time</h2>
+  <div class="row" style="margin-bottom:.75rem;">
+    <label>Site</label>
+    <select id="site">
+      <option value="1">EAST (1)</option>
+      <option value="2">WEST (2)</option>
+    </select>
+    <label>Date</label>
+    <input type="date" id="date"/>
+    <button class="button" onclick="loadSlots()">Refresh</button>
+  </div>
+  <div id="msg" style="margin:.25rem 0; color:#0a7a28;"></div>
+  <div class="slotgrid" id="grid"></div>
+</div>
+<script>
+function today(){ const d=new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10); }
+document.getElementById('date').value = today();
+
+async function loadSlots(){
+  const site = document.getElementById('site').value;
+  const date = document.getElementById('date').value;
+  const grid = document.getElementById('grid');
+  grid.innerHTML = 'Loading…';
+  const r = await fetch(`/api/sites/${site}/slots?date=${date}`);
+  const list = await r.json();
+  grid.innerHTML='';
+  if (!Array.isArray(list) || list.length===0){ grid.textContent='No open slots'; return; }
+  list.forEach(t => {
+    const b = document.createElement('button');
+    b.className='slot'; b.textContent=t;
+    b.onclick=()=>hold(site,date,t);
+    grid.appendChild(b);
+  });
+}
+
+async function hold(site_id,date,slot_time){
+  const r = await fetch('/api/slots/hold',{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ site_id:Number(site_id), date, slot_time })
+  });
+  const j = await r.json();
+  if (!r.ok || j.error){ alert('Hold failed: '+(j.error||r.statusText)); return; }
+  const q = new URLSearchParams({ token:j.hold_token, site_id, date, slot_time });
+  location.href = 'timeslots-driver.html?'+q.toString();
+}
+
+loadSlots();
+</script>
+</body>
+</html>
