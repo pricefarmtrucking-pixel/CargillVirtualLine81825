@@ -2,9 +2,9 @@
   "name": "cargill-virtual-line",
   "version": "1.0.0",
   "description": "Cargill Soybean Virtual Line Scheduling App",
-  "main": "index.js",
+  "main": "index.cjs",
   "scripts": {
-    "start": "node index.js",
+    "start": "node index.cjs",
     "migrate": "node migrate.js",
     "postinstall": "npm rebuild better-sqlite3 --build-from-source"
   },
