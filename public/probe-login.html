@@ -1,69 +1,89 @@
 <!doctype html>
-<html lang="en">
+<html>
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Probe — Cargill Soybean</title>
+  <title>Probe Login — Cargill Soybean Virtual Line</title>
   <style>
-    :root{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#222}
-    body{background:#f5f7fa;margin:0}
-    .wrap{max-width:520px;margin:10vh auto;background:#fff;border:1px solid #e7e7e7;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,.06);padding:1.2rem}
-    h2{margin:0 0 .6rem}
-    label{display:block;margin:.5rem 0 .25rem;color:#555}
-    input,select{width:100%;padding:.7rem .8rem;border:1px solid #ccc;border-radius:10px}
-    .row{display:flex;gap:.5rem;margin-top:.75rem}
-    .btn{border:1px solid #ddd;border-radius:10px;padding:.6rem 1rem;cursor:pointer;background:#1e90ff;color:#fff}
-    .ghost{background:#f7f7f7;color:#222;border-color:#ddd}
-    #msg{min-height:1.2em;margin-top:.5rem;font-size:.9rem}
-    pre{background:#fafafa;border:1px solid #eee;border-radius:8px;padding:.6rem;white-space:pre-wrap}
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
+    .container { max-width: 500px; margin: 10vh auto; padding: 0 1rem; }
+    .card { border:1px solid #ddd; border-radius:12px; padding:1.5rem; background:#fff; box-shadow: 0 2px 12px rgba(0,0,0,.05); }
+    h2 { margin-top:0; }
+    .button { padding:.6rem 1rem; border:none; border-radius:10px; cursor:pointer; text-decoration:none; display:inline-block; }
+    .button.primary { background:#1e90ff; color:#fff; }
+    .button.ghost { background:#f7f7f7; color:#222; border:1px solid #ddd; }
+    .input { width:100%; padding:.7rem .8rem; border:1px solid #ccc; border-radius:10px; }
+    .row { display:flex; gap:.5rem; align-items:center; margin-top:.6rem; }
+    .small { font-size:.9rem; color:#555; }
+    #otpMsg { margin-top:.6rem; min-height: 1.2em; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <h2>Probe Lookup</h2>
-    <p style="color:#666;margin-top:0">Enter the driver’s 4‑digit code and select the site.</p>
+  <div class="container">
+    <div class="card">
+      <h2>Probe Sign-In</h2>
+      <p class="small">Enter your mobile number to receive a one-time probe access code.</p>
 
-    <label for="site">Site</label>
-    <select id="site">
-      <option value="EAST">EAST (1)</option>
-      <option value="WEST">WEST (2)</option>
-    </select>
+      <label>Mobile number</label>
+      <input id="phone" class="input" placeholder="+1XXXXXXXXXX" autocomplete="tel"/>
+      
+      <div class="row">
+        <button id="btnSend" class="button primary" type="button">Send Code</button>
+        <button id="btnResend" class="button ghost" type="button" disabled>Resend (60)</button>
+      </div>
+      
+      <div id="otpMsg" class="small" style="color:#b00020;"></div>
 
-    <label for="code">4‑digit code</label>
-    <input id="code" maxlength="4" inputmode="numeric" placeholder="1234"/>
-
-    <div class="row">
-      <button class="btn" onclick="verify()">Verify</button>
-      <a class="btn ghost" href="landing.html">Back</a>
+      <div id="codeBox" style="margin-top:1rem; display:none;">
+        <label>Enter 6-digit code</label>
+        <input id="code" maxlength="6" class="input" inputmode="numeric" placeholder="______" style="text-align:center;"/>
+        <button id="btnVerify" class="button primary" style="margin-top:.6rem;" type="button">Verify & Continue</button>
+      </div>
     </div>
-    <div id="msg"></div>
-    <pre id="out"></pre>
   </div>
 
 <script>
-function today(){ const d=new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10); }
-
-async function verify(){
-  const site = document.getElementById('site').value;
-  const code = (document.getElementById('code').value||'').trim();
-  const msg = document.getElementById('msg');
-  const out = document.getElementById('out');
-  msg.textContent=''; out.textContent='';
-  if(!/^[0-9]{4}$/.test(code)){ msg.textContent='Code must be 4 digits'; msg.style.color='#b00020'; return; }
-  try{
-    const u = new URL('/api/scale/verify', location.origin);
-    u.searchParams.set('code', code);
-    u.searchParams.set('site', site);
-    u.searchParams.set('date', today()); // optional, your API defaults to today
-    const r = await fetch(u.toString(), { credentials:'include' });
-    const j = await r.json().catch(()=>({}));
-    if(!r.ok || j.error){ msg.textContent = j.error || 'Not found'; msg.style.color='#b00020'; return; }
-    msg.textContent = 'Match found ✓'; msg.style.color='#0a7a28';
-    out.textContent = JSON.stringify(j, null, 2);
-  }catch(e){
-    msg.textContent = e?.message || 'Network error'; msg.style.color='#b00020';
+(function(){
+  const apiBase = '';
+  const $ = id => document.getElementById(id);
+  function setMsg(t, ok=false){ const el=$('otpMsg'); el.textContent=t||''; el.style.color = ok?'#0a7a28':'#b00020'; }
+  function normalizePhone(p){
+    const d = String(p||'').replace(/\D/g,'');
+    if (/^\d{10}$/.test(d)) return '+1'+d;
+    const m = d.match(/^1?(\d{10})$/); return m?'+1'+m[1]:null;
   }
-}
+  function startCooldown(seconds=60){
+    const btn = $('btnResend'); btn.disabled = true; let t=seconds; btn.textContent='Resend ('+t+')';
+    const iv=setInterval(()=>{ t--; btn.textContent= t>0? 'Resend ('+t+')' : 'Resend'; if(t<=0){clearInterval(iv); btn.disabled=false;}},1000);
+  }
+  async function sendOrResend(){
+    setMsg('', true);
+    const phone = normalizePhone($('phone').value.trim());
+    if (!phone) return setMsg('Enter a valid 10-digit US number');
+    try{
+      const r = await fetch(apiBase+'/auth/request-code',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ phone, role:"probe" }), credentials:'include' });
+      const j = await r.json().catch(()=>({}));
+      if(!r.ok || j.error) return setMsg('Failed: '+(j.error||r.statusText));
+      setMsg('Code sent! Check your texts.', true);
+      $('codeBox').style.display='block'; $('code').focus(); startCooldown(60);
+    }catch(e){ setMsg('Network error: '+(e?.message||e)); }
+  }
+  async function verify(){
+    const phone = normalizePhone($('phone').value.trim()); const code = $('code').value.trim();
+    if(!phone) return setMsg('Phone missing/invalid');
+    if(!/^\d{6}$/.test(code)) return setMsg('Enter the 6-digit code');
+    try{
+      const r = await fetch(apiBase+'/auth/verify',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ phone, code, role:"probe" }), credentials:'include' });
+      const j = await r.json().catch(()=>({}));
+      if(!r.ok || j.error) return setMsg('Verify failed: '+(j.error||r.statusText));
+      setMsg('Verified! Redirecting…', true);
+      location.href='facility-appointments.html';  // ✅ goes to Probe appointments page
+    }catch(e){ setMsg('Network error: '+(e?.message||e)); }
+  }
+  $('btnSend').addEventListener('click', e=>{e.preventDefault(); sendOrResend();});
+  $('btnResend').addEventListener('click', e=>{e.preventDefault(); if(!$('btnResend').disabled) sendOrResend();});
+  $('btnVerify').addEventListener('click', e=>{e.preventDefault(); verify();});
+})();
 </script>
 </body>
 </html>
