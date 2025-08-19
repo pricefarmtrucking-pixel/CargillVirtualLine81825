@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Probe — Cargill Soybean</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#222}
+    body{background:#f5f7fa;margin:0}
+    .wrap{max-width:520px;margin:10vh auto;background:#fff;border:1px solid #e7e7e7;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,.06);padding:1.2rem}
+    h2{margin:0 0 .6rem}
+    label{display:block;margin:.5rem 0 .25rem;color:#555}
+    input,select{width:100%;padding:.7rem .8rem;border:1px solid #ccc;border-radius:10px}
+    .row{display:flex;gap:.5rem;margin-top:.75rem}
+    .btn{border:1px solid #ddd;border-radius:10px;padding:.6rem 1rem;cursor:pointer;background:#1e90ff;color:#fff}
+    .ghost{background:#f7f7f7;color:#222;border-color:#ddd}
+    #msg{min-height:1.2em;margin-top:.5rem;font-size:.9rem}
+    pre{background:#fafafa;border:1px solid #eee;border-radius:8px;padding:.6rem;white-space:pre-wrap}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h2>Probe Lookup</h2>
+    <p style="color:#666;margin-top:0">Enter the driver’s 4‑digit code and select the site.</p>
+
+    <label for="site">Site</label>
+    <select id="site">
+      <option value="EAST">EAST (1)</option>
+      <option value="WEST">WEST (2)</option>
+    </select>
+
+    <label for="code">4‑digit code</label>
+    <input id="code" maxlength="4" inputmode="numeric" placeholder="1234"/>
+
+    <div class="row">
+      <button class="btn" onclick="verify()">Verify</button>
+      <a class="btn ghost" href="landing.html">Back</a>
+    </div>
+    <div id="msg"></div>
+    <pre id="out"></pre>
+  </div>
+
+<script>
+function today(){ const d=new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10); }
+
+async function verify(){
+  const site = document.getElementById('site').value;
+  const code = (document.getElementById('code').value||'').trim();
+  const msg = document.getElementById('msg');
+  const out = document.getElementById('out');
+  msg.textContent=''; out.textContent='';
+  if(!/^[0-9]{4}$/.test(code)){ msg.textContent='Code must be 4 digits'; msg.style.color='#b00020'; return; }
+  try{
+    const u = new URL('/api/scale/verify', location.origin);
+    u.searchParams.set('code', code);
+    u.searchParams.set('site', site);
+    u.searchParams.set('date', today()); // optional, your API defaults to today
+    const r = await fetch(u.toString(), { credentials:'include' });
+    const j = await r.json().catch(()=>({}));
+    if(!r.ok || j.error){ msg.textContent = j.error || 'Not found'; msg.style.color='#b00020'; return; }
+    msg.textContent = 'Match found ✓'; msg.style.color='#0a7a28';
+    out.textContent = JSON.stringify(j, null, 2);
+  }catch(e){
+    msg.textContent = e?.message || 'Network error'; msg.style.color='#b00020';
+  }
+}
+</script>
+</body>
+</html>
