@@ -1,166 +1,431 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Facility — Appointments</title>
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin:0; background:#f9f9f9; }
-    .container { max-width:1200px; margin:2rem auto; background:#fff; border:1px solid #ddd; border-radius:10px; padding:1.5rem; box-shadow:0 2px 6px rgba(0,0,0,.05); }
-    h1 { margin-top:0; font-size:1.4rem; }
-    table { width:100%; border-collapse:collapse; margin-top:1rem; }
-    th, td { padding:.6rem; border-bottom:1px solid #eee; text-align:left; font-size:.9rem; }
-    th { background:#f3f3f3; }
-    .status-open { color:#0a7a28; font-weight:bold; }
-    .status-reserved { color:#0057b7; font-weight:bold; }
-    .status-cancelled { color:#b00020; font-weight:bold; }
-    .btn { padding:.4rem .7rem; border-radius:6px; border:1px solid #ccc; background:#f7f7f7; cursor:pointer; }
-    .btn.primary { background:#1e90ff; color:#fff; border:none; }
-    .row { display:flex; align-items:center; gap:.6rem; margin-bottom:.8rem; flex-wrap:wrap; }
-    select, input { padding:.4rem .6rem; border:1px solid #ccc; border-radius:6px; }
-    .error { color:#b00020; margin-top:.5rem; }
-    .note { font-size:.8rem; color:#555; margin-top:.8rem; }
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
+    .container { max-width: 1100px; margin: 4vh auto; padding: 0 1rem; }
+    .header { display:flex; align-items:center; justify-content:space-between; gap:.75rem; }
+    .title { font-weight: 800; }
+    .row { display:flex; align-items:center; gap:.5rem; flex-wrap: wrap; }
+    .chip { padding:.25rem .6rem; border:1px solid #ddd; border-radius:999px; background:#f7f7f7; font-size:.9rem; }
+    .btn { padding:.45rem .75rem; border:1px solid #ddd; border-radius:10px; background:#fff; cursor:pointer; }
+    .btn.primary { background:#1e90ff; color:#fff; border-color:#1e90ff; }
+    .btn.small { font-size:.85rem; padding:.3rem .55rem; }
+    .btn.warn { background:#fff3f3; border-color:#ffdede; color:#aa1a1a; }
+    .input, select { padding:.5rem .6rem; border:1px solid #ccc; border-radius:10px; }
+    .table { width:100%; border-collapse: collapse; margin-top:.75rem; }
+    .table th, .table td { padding:.6rem .5rem; border-bottom:1px solid #eee; vertical-align: top; }
+    .pill { padding:.15rem .5rem; border-radius:999px; font-size:.8rem; border:1px solid #e5e5e5; background:#fafafa; }
+    .pill.res { color:#0a7a28; background:#eaf8ee; border-color:#cfe9d6; }
+    .pill.open { color:#555; }
+    .right { margin-left:auto; }
+    .toolbar { display:flex; gap:.5rem; align-items:center; }
+    .muted { color:#666; font-size:.9rem; }
+    .link { color:#1e90ff; text-decoration:none; }
+    /* Modal */
+    .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; padding:1rem; }
+    .modal { width:min(520px, 96vw); background:#fff; border-radius:12px; border:1px solid #ddd; box-shadow:0 10px 30px rgba(0,0,0,.2); }
+    .modal header, .modal footer { padding: .9rem 1rem; border-bottom:1px solid #eee; }
+    .modal footer { border-top:1px solid #eee; border-bottom:none; display:flex; gap:.5rem; justify-content:flex-end; }
+    .modal .body { padding: 1rem; display:grid; grid-template-columns: 1fr 1fr; gap:.6rem; }
+    .modal .body .full { grid-column: 1/-1; }
+    .help { font-size:.85rem; color:#777; }
+    .no-data { padding:1rem; border:1px dashed #ddd; border-radius:10px; text-align:center; color:#666; }
+    @media (max-width: 900px) { .modal .body { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h1>Facility — Appointments</h1>
-    <div class="row">
-      <a href="index.html" class="btn">Home</a>
-      <a href="timeslots-select.html" class="btn">Driver Site</a>
-      <label>Site</label>
+<div class="container">
+  <div class="header">
+    <div class="title">Cargill Soybean — Facility</div>
+    <div class="toolbar right">
+      <a class="btn" href="index.html">Driver Site</a>
+      <button class="btn" id="btnRefresh">Refresh</button>
+    </div>
+  </div>
+
+  <div class="row" style="margin-top:.6rem;">
+    <div class="chip">Appointments — <span id="hdrDate"></span> (<span id="hdrSiteTxt"></span>)</div>
+    <div class="row right">
+      <label class="muted">Site</label>
       <select id="site">
-        <option value="east">East</option>
-        <option value="west">West</option>
+        <option value="1">East</option>
+        <option value="2">West</option>
       </select>
-      <label>Date</label>
-      <input type="date" id="date"/>
-      <button id="refresh" class="btn primary">Refresh</button>
-      <label><input type="checkbox" id="autoRefresh"/> Auto-refresh (30s)</label>
-      <label>Filter</label>
+      <label class="muted">Date</label>
+      <input id="date" type="date" class="input"/>
+      <label class="muted">Filter</label>
       <select id="filter">
         <option value="all">All</option>
         <option value="open">Open</option>
         <option value="reserved">Reserved</option>
       </select>
-      <input type="text" id="search" placeholder="Search name, plate, vendor, code..."/>
+      <input id="q" class="input" placeholder="Search name, plate, code..."/>
     </div>
-    <div id="error" class="error"></div>
-    <table>
-      <thead>
-        <tr>
-          <th>Time</th>
-          <th>Driver</th>
-          <th>Plate</th>
-          <th>Vendor</th>
-          <th>Farm/Ticket</th>
-          <th>Est. Amt</th>
-          <th>Unit</th>
-          <th>Phone</th>
-          <th>Probe Code</th>
-          <th>Status</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody id="rows">
-        <tr><td colspan="11">Loading…</td></tr>
-      </tbody>
-    </table>
-    <div class="note">* "Probe Code" is the 4-digit confirmation used by the probe desk to match the driver to the load.</div>
   </div>
+
+  <table class="table" id="apptTable" aria-label="appointments">
+    <thead>
+      <tr>
+        <th style="min-width:64px;">Time</th>
+        <th>Driver</th>
+        <th>Plate</th>
+        <th>Vendor</th>
+        <th>Farm/Ticket</th>
+        <th>Est. Amt</th>
+        <th>Unit</th>
+        <th>Phone</th>
+        <th>Probe Code</th>
+        <th>Status</th>
+        <th style="min-width:160px;">Actions</th>
+      </tr>
+    </thead>
+    <tbody id="tbody">
+      <tr><td colspan="11"><div class="no-data">Loading…</div></td></tr>
+    </tbody>
+  </table>
+
+  <div class="muted" style="margin-top:.6rem;">
+    * “Probe Code” is the 4‑digit confirmation used by the probe desk to match the driver to the load.
+  </div>
+</div>
+
+<!-- Assign / Reassign Modal -->
+<div class="modal-backdrop" id="assignBack">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="assignTitle">
+    <header><strong id="assignTitle">Assign Reservation</strong></header>
+    <div class="body">
+      <div class="full help" id="assignWhen"></div>
+      <div>
+        <label>Driver name</label>
+        <input id="f_driver" class="input" placeholder="e.g., Brian"/>
+      </div>
+      <div>
+        <label>License plate</label>
+        <input id="f_plate" class="input" placeholder="e.g., LR6180"/>
+      </div>
+      <div>
+        <label>Vendor</label>
+        <input id="f_vendor" class="input" placeholder="e.g., River Valley"/>
+      </div>
+      <div>
+        <label>Farm/Ticket</label>
+        <input id="f_farm" class="input" placeholder="Optional"/>
+      </div>
+      <div>
+        <label>Est. amount</label>
+        <input id="f_amt" class="input" inputmode="decimal" placeholder="e.g., 1000"/>
+      </div>
+      <div>
+        <label>Unit</label>
+        <select id="f_unit" class="input">
+          <option value="Bushels">Bushels</option>
+          <option value="Tons">Tons</option>
+          <option value="Loads">Loads</option>
+        </select>
+      </div>
+      <div class="full">
+        <label>Driver phone</label>
+        <input id="f_phone" class="input" placeholder="+1XXXXXXXXXX"/>
+      </div>
+      <div class="full">
+        <label>4‑digit probe code</label>
+        <div class="row">
+          <input id="f_code" class="input" placeholder="1234" maxlength="4" style="max-width:120px;" inputmode="numeric"/>
+          <button class="btn small" id="btnGenCode" type="button" title="Generate random 4‑digit code">Generate</button>
+        </div>
+        <div class="help">This will be texted to the driver and saved to the reservation.</div>
+      </div>
+    </div>
+    <footer>
+      <button class="btn" id="btnAssignCancel" type="button">Cancel</button>
+      <button class="btn primary" id="btnAssignSave" type="button">Save</button>
+    </footer>
+  </div>
+</div>
+
+<!-- Reassign Modal -->
+<div class="modal-backdrop" id="moveBack">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="moveTitle">
+    <header><strong id="moveTitle">Reassign Reservation</strong></header>
+    <div class="body">
+      <div class="full help" id="moveWhen">Move reservation</div>
+      <div>
+        <label>New time (HH:MM)</label>
+        <input id="move_time" class="input" placeholder="e.g., 08:24"/>
+      </div>
+      <div class="full help">Enter a valid slot time for the same date/site.</div>
+    </div>
+    <footer>
+      <button class="btn" id="btnMoveCancel" type="button">Cancel</button>
+      <button class="btn primary" id="btnMoveSave" type="button">Move</button>
+    </footer>
+  </div>
+</div>
 
 <script>
 (function(){
-  const apiBase = '';
-  const $ = id => document.getElementById(id);
-  let timer;
+  // --- helpers
+  const $ = sel => document.querySelector(sel);
+  const $$ = sel => Array.from(document.querySelectorAll(sel));
+  const asEl = (html) => { const t=document.createElement('template'); t.innerHTML=html.trim(); return t.content.firstElementChild; };
+  const fmtDate = (d) => d.toISOString().slice(0,10);
+  const todayLocalISO = () => {
+    const d=new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10);
+  };
+  const siteName = (id) => id==2?'West':'East';
+  const clamp4 = (s)=> (s||'').replace(/\D/g,'').slice(0,4);
+  const normPhone = (v) => {
+    const d=(v||'').replace(/\D/g,'');
+    if (/^\d{10}$/.test(d)) return '+1'+d;
+    const m=d.match(/^1?(\d{10})$/); return m?'+1'+m[1]:null;
+  };
+  const gen4 = ()=> String(Math.floor(1000 + Math.random()*9000));
 
-  async function load(){
-    clearTimeout(timer);
-    const site = $('site').value;
-    const date = $('date').value;
-    const filter = $('filter').value;
-    const search = $('search').value.trim();
-    const rows = $('rows');
-    const err = $('error');
-    err.textContent = '';
-    rows.innerHTML = '<tr><td colspan="11">Loading…</td></tr>';
+  // --- state
+  const state = {
+    site_id: 1,
+    date: todayLocalISO(),
+    rows: [],
+    moveReservationId: null,
+    assignTargetTime: null,
+  };
 
+  // --- DOM refs
+  const elSite = $('#site');
+  const elDate = $('#date');
+  const elFilter = $('#filter');
+  const elQ = $('#q');
+  const elHdrDate = $('#hdrDate');
+  const elHdrSite = $('#hdrSiteTxt');
+  const elTbody = $('#tbody');
+  const elBtnRefresh = $('#btnRefresh');
+
+  // assign modal refs
+  const assignBack = $('#assignBack');
+  const assignWhen = $('#assignWhen');
+  const f_driver=$('#f_driver'), f_plate=$('#f_plate'), f_vendor=$('#f_vendor'), f_farm=$('#f_farm'),
+        f_amt=$('#f_amt'), f_unit=$('#f_unit'), f_phone=$('#f_phone'), f_code=$('#f_code');
+  const btnGenCode = $('#btnGenCode'), btnAssignCancel = $('#btnAssignCancel'), btnAssignSave = $('#btnAssignSave');
+
+  // reassign modal refs
+  const moveBack = $('#moveBack');
+  const moveWhen = $('#moveWhen');
+  const move_time = $('#move_time');
+  const btnMoveCancel = $('#btnMoveCancel'), btnMoveSave = $('#btnMoveSave');
+
+  // --- init
+  elDate.value = state.date;
+  elSite.value = String(state.site_id);
+  elHdrDate.textContent = state.date;
+  elHdrSite.textContent = siteName(state.site_id);
+
+  // --- events
+  elSite.addEventListener('change', () => { state.site_id = Number(elSite.value); elHdrSite.textContent = siteName(state.site_id); fetchAndRender(); });
+  elDate.addEventListener('change', () => { state.date = elDate.value || todayLocalISO(); elHdrDate.textContent = state.date; fetchAndRender(); });
+  elFilter.addEventListener('change', render);
+  elQ.addEventListener('input', render);
+  elBtnRefresh.addEventListener('click', fetchAndRender);
+
+  // --- network
+  async function fetchAndRender(){
+    elTbody.innerHTML = `<tr><td colspan="11"><div class="no-data">Loading…</div></td></tr>`;
     try{
-      const r = await fetch(apiBase+'/api/appointments',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({ site_id:site, date })
+      const r = await fetch(`/api/appointments?site_id=${encodeURIComponent(state.site_id)}&date=${encodeURIComponent(state.date)}`, { credentials:'include' });
+      const data = await r.json();
+      // Expect array
+      state.rows = Array.isArray(data)? data : [];
+    }catch(err){
+      state.rows = [];
+      console.error(err);
+      elTbody.innerHTML = `<tr><td colspan="11"><div class="no-data">Error loading appointments.</div></td></tr>`;
+      return;
+    }
+    render();
+  }
+
+  // --- render
+  function render(){
+    const q = (elQ.value||'').trim().toLowerCase();
+    const flt = elFilter.value;
+    let rows = state.rows;
+
+    if (flt === 'open') rows = rows.filter(r => (r.status||'Open').toLowerCase()==='open');
+    if (flt === 'reserved') rows = rows.filter(r => (r.status||'Open').toLowerCase()!=='open');
+
+    if (q) {
+      rows = rows.filter(r => {
+        const bag = [
+          r.slot_time, r.driver_name, r.license_plate, r.vendor_name,
+          r.farm_or_ticket, r.driver_phone, r.queue_code
+        ].map(x => (x||'').toString().toLowerCase()).join(' ');
+        return bag.includes(q);
       });
-      const j = await r.json().catch(()=>({}));
-      if(!r.ok || j.error) throw new Error(j.error||r.statusText);
+    }
 
-      let list = j.appointments || [];
-      if(filter!=='all') list = list.filter(x=>x.status.toLowerCase()===filter);
-      if(search){
-        const q = search.toLowerCase();
-        list = list.filter(x=>
-          (x.driver||'').toLowerCase().includes(q) ||
-          (x.plate||'').toLowerCase().includes(q) ||
-          (x.vendor||'').toLowerCase().includes(q) ||
-          (x.queue_code||'').toLowerCase().includes(q)
-        );
-      }
+    if (!rows.length){
+      elTbody.innerHTML = `<tr><td colspan="11"><div class="no-data">No appointments found.</div></td></tr>`;
+      return;
+    }
 
-      if(!list.length){
-        rows.innerHTML = '<tr><td colspan="11">No appointments found.</td></tr>';
-        return;
-      }
-
-      rows.innerHTML = list.map(x=>`
+    elTbody.innerHTML = '';
+    rows.forEach(r => {
+      const isOpen = (r.status||'Open').toLowerCase()==='open';
+      const tr = asEl(`
         <tr>
-          <td>${x.time||''}</td>
-          <td>${x.driver||''}</td>
-          <td>${x.plate||''}</td>
-          <td>${x.vendor||''}</td>
-          <td>${x.farm_ticket||''}</td>
-          <td>${x.est_amount||''}</td>
-          <td>${x.unit||''}</td>
-          <td>${x.phone||''}</td>
-          <td>${x.queue_code||'-'}</td>
-          <td class="status-${(x.status||'').toLowerCase()}">${x.status||''}</td>
-          <td>
-            ${x.status==='Open' ? `<button class="btn primary" onclick="assign('${x.id}')">Assign</button>` : `
-              <button class="btn" onclick="reassign('${x.id}')">Reassign</button>
-              <button class="btn" onclick="cancelRes('${x.id}')">Cancel</button>
-            `}
+          <td><strong>${r.slot_time||''}</strong></td>
+          <td>${esc(r.driver_name) || '—'}</td>
+          <td>${esc(r.license_plate) || '—'}</td>
+          <td>${esc(r.vendor_name) || '—'}</td>
+          <td>${esc(r.farm_or_ticket) || '—'}</td>
+          <td>${r.est_amount != null ? esc(r.est_amount) : '—'}</td>
+          <td>${esc(r.est_unit) || '—'}</td>
+          <td>${esc(r.driver_phone) || '—'}</td>
+          <td>${esc(r.queue_code) || '—'}</td>
+          <td><span class="pill ${isOpen?'open':'res'}">${isOpen?'Open':'Reserved'}</span></td>
+          <td class="row" style="gap:.35rem;">
+            ${isOpen
+              ? `<button class="btn small primary" data-act="assign" data-time="${r.slot_time}">Assign</button>`
+              : `<button class="btn small" data-act="reassign" data-id="${r.id}" data-time="${r.slot_time}">Reassign</button>
+                 <button class="btn small warn" data-act="cancel" data-id="${r.id}">Cancel</button>`
+            }
           </td>
         </tr>
-      `).join('');
+      `);
+      elTbody.appendChild(tr);
+    });
 
-    }catch(e){
-      err.textContent = 'Load failed: '+e.message;
-      rows.innerHTML = '<tr><td colspan="11">Error loading data.</td></tr>';
+    // wire row buttons
+    elTbody.querySelectorAll('button').forEach(btn=>{
+      const act = btn.getAttribute('data-act');
+      if (act === 'assign') btn.addEventListener('click', onAssignClick);
+      if (act === 'reassign') btn.addEventListener('click', onReassignClick);
+      if (act === 'cancel') btn.addEventListener('click', onCancelClick);
+    });
+  }
+
+  function esc(v){ return (v==null?'':String(v)).replace(/[&<>"]/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[s])); }
+
+  // --- assign flow
+  function onAssignClick(e){
+    const slot_time = e.currentTarget.getAttribute('data-time');
+    state.assignTargetTime = slot_time;
+    openAssign(slot_time);
+  }
+
+  function openAssign(slot_time){
+    assignWhen.textContent = `Assign ${siteName(state.site_id)} on ${state.date} at ${slot_time}`;
+    // clear fields
+    f_driver.value=''; f_plate.value=''; f_vendor.value=''; f_farm.value='';
+    f_amt.value=''; f_unit.value='Bushels'; f_phone.value=''; f_code.value=gen4();
+    assignBack.style.display='flex';
+    f_driver.focus();
+  }
+  function closeAssign(){ assignBack.style.display='none'; }
+
+  btnGenCode.addEventListener('click', ()=> { f_code.value = gen4(); f_code.focus(); });
+
+  btnAssignCancel.addEventListener('click', closeAssign);
+  btnAssignSave.addEventListener('click', async ()=>{
+    // validate
+    const payload = {
+      site_id: state.site_id,
+      date: state.date,
+      slot_time: state.assignTargetTime,
+      driver_name: f_driver.value.trim(),
+      license_plate: f_plate.value.trim(),
+      vendor_name: f_vendor.value.trim(),
+      farm_or_ticket: f_farm.value.trim(),
+      est_amount: f_amt.value.trim()? Number(f_amt.value.trim()) : null,
+      est_unit: f_unit.value,
+      driver_phone: normPhone(f_phone.value.trim()),
+      queue_code: clamp4(f_code.value)
+    };
+    if (!payload.driver_name) return alert('Driver name is required');
+    if (!payload.license_plate) return alert('License plate is required');
+    if (!payload.driver_phone) return alert('Enter a valid US mobile number');
+    if (!payload.queue_code || payload.queue_code.length!==4) return alert('Enter a 4-digit probe code');
+
+    try{
+      const r = await fetch('/api/slots/reserve', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        credentials:'include',
+        body: JSON.stringify(payload)
+      });
+      const j = await r.json().catch(()=>({}));
+      if (!r.ok || j.error) {
+        alert('Assign failed: ' + (j.error || r.statusText));
+        return;
+      }
+      closeAssign();
+      await fetchAndRender();
+    }catch(err){
+      alert('Network error: ' + err.message);
     }
+  });
 
-    if($('autoRefresh').checked){
-      timer = setTimeout(load, 30000);
+  // --- reassign flow
+  function onReassignClick(e){
+    const id = Number(e.currentTarget.getAttribute('data-id'));
+    const t  = e.currentTarget.getAttribute('data-time');
+    state.moveReservationId = id;
+    moveWhen.textContent = `Move reservation #${id} on ${state.date} (currently ${t})`;
+    move_time.value = '';
+    moveBack.style.display='flex';
+    move_time.focus();
+  }
+  function closeMove(){ moveBack.style.display='none'; }
+  btnMoveCancel.addEventListener('click', closeMove);
+  btnMoveSave.addEventListener('click', async ()=>{
+    const to_slot_time = move_time.value.trim();
+    if (!/^\d{2}:\d{2}$/.test(to_slot_time)) return alert('Enter a valid time in HH:MM (e.g., 08:24)');
+    try{
+      const r = await fetch('/api/slots/reassign', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        credentials:'include',
+        body: JSON.stringify({ reservation_id: state.moveReservationId, to_slot_time })
+      });
+      const j = await r.json().catch(()=>({}));
+      if (!r.ok || j.error) {
+        alert('Reassign failed: ' + (j.error || r.statusText));
+        return;
+      }
+      closeMove();
+      await fetchAndRender();
+    }catch(err){
+      alert('Network error: ' + err.message);
+    }
+  });
+
+  // --- cancel flow
+  async function onCancelClick(e){
+    const id = Number(e.currentTarget.getAttribute('data-id'));
+    if (!confirm(`Cancel reservation #${id}?`)) return;
+    try{
+      const r = await fetch('/api/slots/cancel', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        credentials:'include',
+        body: JSON.stringify({ reservation_id: id })
+      });
+      const j = await r.json().catch(()=>({}));
+      if (!r.ok || j.error) {
+        alert('Cancel failed: ' + (j.error || r.statusText));
+        return;
+      }
+      await fetchAndRender();
+    }catch(err){
+      alert('Network error: ' + err.message);
     }
   }
 
-  window.assign = async function(id){
-    alert('Assign flow would POST /api/slots/reserve {slot_id:'+id+'}');
-  }
-  window.reassign = async function(id){
-    alert('Reassign flow would POST /api/slots/reassign {reservation_id:'+id+'}');
-  }
-  window.cancelRes = async function(id){
-    alert('Cancel flow would POST /api/slots/cancel {reservation_id:'+id+'}');
-  }
-
-  $('refresh').addEventListener('click', load);
-  $('site').addEventListener('change', load);
-  $('date').addEventListener('change', load);
-  $('filter').addEventListener('change', load);
-  $('search').addEventListener('input', load);
-
-  $('date').value = new Date().toISOString().split('T')[0];
-  load();
+  // initial load
+  fetchAndRender();
 })();
 </script>
 </body>
