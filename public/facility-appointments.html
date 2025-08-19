@@ -1,286 +1,302 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Facility — Appointments</title>
   <style>
-    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
-    .container { max-width: 1200px; margin: 5vh auto; padding: 0 1rem; }
-    .card { border:1px solid #ddd; border-radius:12px; padding:1rem; background:#fff; box-shadow: 0 2px 12px rgba(0,0,0,.03); }
-    .row { display:flex; gap:.6rem; align-items:center; flex-wrap:wrap; }
-    .button { padding:.48rem .8rem; border-radius:10px; border:1px solid #ddd; background:#f7f7f7; cursor:pointer; }
-    .button.primary { background:#1e90ff; color:#fff; border-color:#1e90ff; }
-    .input, .select { padding:.48rem .6rem; border:1px solid #ccc; border-radius:10px; }
-    table { width:100%; border-collapse: collapse; margin-top:.75rem; }
-    th, td { padding:.52rem .6rem; border-bottom:1px solid #eee; text-align:left; vertical-align:top; }
-    th.sticky { position: sticky; top:0; background:#fff; z-index:1; }
-    .mono { font-variant-numeric: tabular-nums; letter-spacing:.02em; }
-    .tag { font-size:.83rem; padding:.15rem .5rem; border-radius:999px; border:1px solid #ddd; background:#fafafa; white-space:nowrap; }
-    .tag.ok { background:#e9f7ef; border-color:#bfe5cf; color:#0a7a28; }
-    .muted { color:#666; }
-    .right { margin-left:auto; }
-    .err { color:#b00020; }
-    .ok { color:#0a7a28; }
-    .toolbar { gap:.8rem; }
-    .chip { padding:.15rem .5rem; border:1px solid #e5e5e5; border-radius:999px; background:#fafafa; font-size:.85rem; }
+    :root{--b:#e9eef3;--t:#222;--muted:#666;--line:#eceff3;--pill:#f5f7fa;--accent:#1e90ff;--good:#0a7a28;--bad:#b00020}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:var(--t);background:#fff;margin:0}
+    .wrap{max-width:1100px;margin:18px auto;padding:0 14px}
+    .toolbar{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.75rem}
+    .toolbar .title{font-weight:800}
+    .btn{border:1px solid #d7dde4;background:#fff;border-radius:10px;padding:.45rem .75rem;cursor:pointer}
+    .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+    .btn.ghost{background:#f7f9fc}
+    .select,.input{border:1px solid #d7dde4;border-radius:10px;padding:.45rem .6rem}
+    .select{background:#fff}
+    .badge{display:inline-block;padding:.2rem .5rem;border-radius:999px;background:var(--pill);border:1px solid #e6ebf1;color:#334}
+    .badge.good{background:#eef9f0;border-color:#d7f0dc;color:var(--good)}
+    .badge.open{background:#f7fbff;border-color:#d7e9ff;color:#1f4b8f}
+    .note{font-size:.85rem;color:var(--muted)}
+    table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+    th,td{padding:.6rem .65rem;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+    thead th{background:#fafbfd;position:sticky;top:0;z-index:1}
+    .row-actions{display:flex;gap:.4rem;flex-wrap:wrap}
+    .err{color:var(--bad);font-size:.9rem}
+    .ok{color:var(--good);font-size:.9rem}
+    .statusbar{min-height:1.2em;margin:.25rem 0}
+    .pill{border:1px solid #e6ebf1;padding:.25rem .5rem;border-radius:999px;background:#fff}
   </style>
 </head>
 <body>
-<div class="container">
-  <div class="card">
-    <div class="row toolbar" style="margin-bottom:.4rem;">
-      <strong>Facility — Appointments</strong>
-      <span id="env" class="chip"></span>
-      <span class="right"></span>
-      <a class="button" href="index.html">Home</a>
-      <button id="btnRefresh" class="button">Refresh</button>
-      <label class="row" style="gap:.35rem;">
-        <input id="auto" type="checkbox"/>
-        <span class="muted">Auto‑refresh (30s)</span>
-      </label>
-    </div>
+  <div class="wrap">
 
-    <div class="row" style="margin-bottom:.3rem;">
+    <!-- Top bar -->
+    <div class="toolbar">
+      <span class="title">Facility — Appointments</span>
+      <a class="btn ghost" href="index.html">Home</a>
+      <a class="btn ghost" href="timeslots-select.html">Driver Site</a>
+
+      <span style="flex:1 0 8px"></span>
+
       <label>Site
         <select id="site" class="select">
-          <option value="1">East</option>
-          <option value="2">West</option>
+          <option value="east">East</option>
+          <option value="west">West</option>
         </select>
       </label>
+
       <label>Date
         <input id="date" class="input" type="date"/>
       </label>
 
-      <span class="right"></span>
+      <button id="btnRefresh" class="btn">Refresh</button>
+      <label class="pill"><input id="autoRefresh" type="checkbox" style="vertical-align:-2px; margin-right:.4rem;">Auto‑refresh (30s)</label>
 
       <label>Filter
         <select id="filter" class="select">
           <option value="all">All</option>
           <option value="open">Open</option>
           <option value="reserved">Reserved</option>
+          <option value="workin">Work‑in</option>
         </select>
       </label>
-      <label>Search
-        <input id="search" class="input" placeholder="Name, plate, vendor, code, phone…"/>
-      </label>
+
+      <input id="q" class="input" placeholder="Search name, plate, vendor, code…" style="min-width:220px"/>
     </div>
 
-    <div id="status" class="muted" style="min-height:1.2em; margin:.2rem 0 .4rem;"></div>
+    <div id="status" class="statusbar"></div>
 
-    <div style="overflow:auto; max-height:68vh; border:1px solid #eee; border-radius:10px;">
-      <table id="grid">
-        <thead>
-          <tr>
-            <th class="sticky">Time</th>
-            <th class="sticky">Driver</th>
-            <th class="sticky">Plate</th>
-            <th class="sticky">Vendor</th>
-            <th class="sticky">Farm/Ticket</th>
-            <th class="sticky">Est. Amt</th>
-            <th class="sticky">Unit</th>
-            <th class="sticky">Phone</th>
-            <th class="sticky">Probe Code</th>
-            <th class="sticky">Status</th>
-          </tr>
-        </thead>
-        <tbody id="tbody">
-          <tr><td colspan="10" class="muted">Loading…</td></tr>
-        </tbody>
-      </table>
-    </div>
+    <!-- Table -->
+    <table id="grid">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Driver</th>
+          <th>Plate</th>
+          <th>Vendor</th>
+          <th>Farm/Ticket</th>
+          <th>Est. Amt</th>
+          <th>Unit</th>
+          <th>Phone</th>
+          <th>Probe Code</th>
+          <th>Status</th>
+          <th style="width:220px">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="rows">
+        <tr><td colspan="11" class="note">Loading…</td></tr>
+      </tbody>
+    </table>
+
+    <p class="note" style="margin-top:.6rem;">
+      * “Probe Code” is the 4‑digit confirmation your backend returns as <code>probe_code</code>, used at the probe desk to match the driver to the load.
+    </p>
   </div>
-</div>
 
 <script>
 (function(){
-  // ===== Config / helpers =====
-  const API = ''; // same-origin
-  const $ = id => document.getElementById(id);
-  const todayISO = ()=>{const d=new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10);};
-  const esc = s => String(s ?? '').replace(/[&<>"]/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[m]));
-  const siteName = id => (Number(id)===2?'West':'East');
+  const apiBase = ''; // same origin
+  const $ = sel => document.querySelector(sel);
+  const rowsEl = $('#rows');
+  const statusEl = $('#status');
 
-  let autoTimer = null;
-  const state = { site:1, date: todayISO(), rows:[], slots:[], appointments:[], lastFetchMsg:'' };
+  // Defaults (today, site=stored or east)
+  const todayISO = new Date().toISOString().slice(0,10);
+  const savedSite = localStorage.getItem('facility_site') || 'east';
+  $('#date').value = todayISO;
+  $('#site').value = savedSite;
 
-  // Preset controls
-  $('date').value = state.date;
-  $('site').value = String(state.site);
+  let lastData = [];
+  let timer = null;
 
-  // Env chip (helps debug CORS/deploys)
-  const origin = location.origin;
-  $('env').textContent = origin;
-
-  // Bind UI
-  $('btnRefresh').addEventListener('click', ()=> refresh(true));
-  $('auto').addEventListener('change', ()=> toggleAuto($('auto').checked));
-  $('site').addEventListener('change', ()=>{ state.site = Number($('site').value); refresh(true); });
-  $('date').addEventListener('change', ()=>{ state.date = $('date').value || todayISO(); refresh(true); });
-  $('filter').addEventListener('change', render);
-  $('search').addEventListener('input', render);
-
-  // First load
-  refresh(true);
-
-  function toggleAuto(on){
-    clearInterval(autoTimer);
-    if (on) autoTimer = setInterval(()=> refresh(false), 30000);
+  function setStatus(msg, ok=false){
+    statusEl.textContent = msg || '';
+    statusEl.className = ok ? 'statusbar ok' : (msg ? 'statusbar err' : 'statusbar');
   }
 
-  async function refresh(showStatus){
-    setStatus(showStatus ? 'Loading…' : '');
-    $('tbody').innerHTML = `<tr><td colspan="10" class="muted">Loading…</td></tr>`;
-    const qs = `site=${encodeURIComponent(state.site)}&date=${encodeURIComponent(state.date)}`;
+  function qsParams(){
+    const site_id = $('#site').value;
+    const date = $('#date').value;
+    return { site_id, date };
+  }
 
+  async function loadAppointments(){
+    const { site_id, date } = qsParams();
+    if (!site_id || !date){
+      setStatus('Pick a site and date.');
+      return;
+    }
+    localStorage.setItem('facility_site', site_id);
+
+    const url = `${apiBase}/api/appointments?site_id=${encodeURIComponent(site_id)}&date=${encodeURIComponent(date)}`;
     try{
-      const [slotsR, apptsR] = await Promise.all([
-        fetch(`${API}/api/slots?${qs}`, { credentials:'include' }),
-        fetch(`${API}/api/appointments?${qs}`, { credentials:'include' })
-      ]);
-
-      // Handle auth errors
-      if (slotsR.status === 401 || apptsR.status === 401) {
-        setStatus('Not signed in. Redirecting to Probe login…', 'err');
-        setTimeout(()=> location.href = 'probe-login.html', 800);
+      setStatus(`Loading ${site_id.toUpperCase()} · ${date} …`, true);
+      const r = await fetch(url, { credentials:'include' });
+      const j = await r.json().catch(()=>({}));
+      if(!r.ok){
+        setStatus(`Load failed: ${url.split('?')[0]} ${r.status} ${JSON.stringify(j)}`);
+        rowsEl.innerHTML = `<tr><td colspan="11" class="err">Error loading data. Check Console (DevTools) for details.</td></tr>`;
+        console.error('Appointments load failed', r.status, j);
         return;
       }
-
-      // Handle CORS/network issues
-      if (!slotsR.ok) {
-        const t = await safeText(slotsR);
-        throw new Error(`/api/slots ${slotsR.status} ${slotsR.statusText} ${t||''}`);
-      }
-      if (!apptsR.ok) {
-        const t = await safeText(apptsR);
-        throw new Error(`/api/appointments ${apptsR.status} ${apptsR.statusText} ${t||''}`);
-      }
-
-      const slotsJ = await safeJson(slotsR);
-      const apptsJ = await safeJson(apptsR);
-
-      // Expect { ok:true, slots:[...] } and { ok:true, appointments:[...] }
-      const slots = (slotsJ && slotsJ.slots) ? slotsJ.slots : [];
-      const appointments = (apptsJ && (apptsJ.appointments || apptsJ.items)) ? (apptsJ.appointments || apptsJ.items) : [];
-
-      state.slots = slots;
-      state.appointments = appointments;
-      state.rows = combine(slots, appointments);
-
-      setStatus(`Showing ${state.rows.length} rows for ${siteName(state.site)} on ${state.date}.`);
+      lastData = Array.isArray(j) ? j : (j.data || []);
       render();
+      setStatus(`Loaded ${lastData.length} rows.`, true);
     }catch(err){
       console.error(err);
-      setStatus(`Load failed: ${err.message||err}`, 'err');
-      $('tbody').innerHTML = `<tr><td colspan="10" class="err">Error loading data. Check Console (DevTools) for details.</td></tr>`;
+      setStatus(`Network error: ${err?.message||err}`);
+      rowsEl.innerHTML = `<tr><td colspan="11" class="err">Network error. Try refresh.</td></tr>`;
     }
   }
 
-  function setStatus(msg, kind){
-    const el = $('status');
-    el.textContent = msg || '';
-    el.classList.remove('err','ok');
-    if (kind) el.classList.add(kind);
-  }
-
-  async function safeJson(res){
-    try { return await res.json(); } catch { return null; }
-  }
-  async function safeText(res){
-    try { return await res.text(); } catch { return ''; }
-  }
-
-  // Merge time base (slots) with reservation details (appointments)
-  function combine(slots, appts){
-    const map = new Map();
-    (appts||[]).forEach(r=>{
-      // normalize keys from either structure
-      const time = r.time || r.slot_time;
-      map.set(time, {
-        time,
-        status: (r.status || '').toLowerCase()==='reserved' ? 'Reserved' : 'Reserved',
-        driver: r.driver || r.driver_name || '',
-        plate: r.plate || r.license_plate || '',
-        vendor: r.vendor || r.vendor_name || '',
-        farm_ticket: r.farm_ticket || r.farm_or_ticket || '',
-        est_amt: r.est_amount ?? r.est_amt ?? '',
-        est_unit: r.est_unit || '',
-        phone: r.phone || r.driver_phone || '',
-        probe_code: r.probe_code || r.queue_code || ''
-      });
-    });
-
-    const rows = [];
-    (slots||[]).forEach(s=>{
-      const time = s.slot_time || s.time;
-      const r = map.get(time);
-      if (r) {
-        rows.push(r);
-      } else {
-        rows.push({
-          time,
-          status: (s.is_reserved? 'Reserved' : 'Open'),
-          driver:'', plate:'', vendor:'', farm_ticket:'',
-          est_amt:'', est_unit:'', phone:'', probe_code:''
-        });
+  // Client‑side filter/search
+  function filtered(){
+    const f = $('#filter').value;
+    const q = ($('#q').value||'').trim().toLowerCase();
+    return lastData.filter(r=>{
+      if(f!=='all'){
+        const s = (r.status||'').toLowerCase();
+        if(f==='open' && s!=='open') return false;
+        if(f==='reserved' && s!=='reserved') return false;
+        if(f==='workin' && !r.is_workin) return false;
       }
-    });
-
-    // In the unlikely case there were reservations without a slot row:
-    (appts||[]).forEach(r=>{
-      const time = r.time || r.slot_time;
-      if (!rows.find(x=>x.time===time)) {
-        rows.push({
-          time,
-          status:'Reserved',
-          driver: r.driver || r.driver_name || '',
-          plate: r.plate || r.license_plate || '',
-          vendor: r.vendor || r.vendor_name || '',
-          farm_ticket: r.farm_ticket || r.farm_or_ticket || '',
-          est_amt: r.est_amount ?? r.est_amt ?? '',
-          est_unit: r.est_unit || '',
-          phone: r.phone || r.driver_phone || '',
-          probe_code: r.probe_code || r.queue_code || ''
-        });
+      if(q){
+        const blob = [
+          r.driver_name, r.license_plate, r.vendor_name,
+          r.farm_or_ticket, r.phone, r.probe_code, r.slot_time
+        ].map(x=>String(x||'').toLowerCase()).join(' ');
+        if(!blob.includes(q)) return false;
       }
+      return true;
     });
+  }
 
-    return rows.sort((a,b)=> String(a.time).localeCompare(String(b.time)));
+  function pill(text, cls=''){
+    const c = cls ? `badge ${cls}` : 'badge';
+    return `<span class="${c}">${text}</span>`;
   }
 
   function render(){
-    const f = $('filter').value;
-    const q = $('search').value.trim().toLowerCase();
+    const data = filtered();
+    if(!data.length){
+      rowsEl.innerHTML = `<tr><td colspan="11" class="note">No appointments found.</td></tr>`;
+      return;
+    }
+    rowsEl.innerHTML = data.map(row=>{
+      const status = (row.status||'open').toLowerCase();
+      const statusPill =
+        status==='reserved' ? pill('Reserved','good') :
+        pill('Open','open');
 
-    const rows = state.rows.filter(r=>{
-      if (f==='open' && r.status==='Reserved') return false;
-      if (f==='reserved' && r.status!=='Reserved') return false;
-      if (!q) return true;
-      const bag = [r.time,r.driver,r.plate,r.vendor,r.farm_ticket,r.phone,r.probe_code].join(' ').toLowerCase();
-      return bag.includes(q);
+      const assignBtn = `<button class="btn" data-act="assign" data-id="${row.reservation_id||''}" data-time="${row.slot_time}">Assign</button>`;
+      const reBtn    = `<button class="btn" data-act="reassign" data-id="${row.reservation_id||''}" data-time="${row.slot_time}">Reassign</button>`;
+      const cancelBtn= `<button class="btn" data-act="cancel" data-id="${row.reservation_id||''}">Cancel</button>`;
+
+      const actions =
+        status==='reserved'
+          ? `<div class="row-actions">${reBtn}${cancelBtn}</div>`
+          : `<div class="row-actions">${assignBtn}</div>`;
+
+      const estAmt = (row.est_amount!=null && row.est_amount!=='') ? row.est_amount : '—';
+
+      return `
+        <tr>
+          <td>${row.slot_time || '—'}</td>
+          <td>${row.driver_name || '—'}</td>
+          <td>${row.license_plate || '—'}</td>
+          <td>${row.vendor_name || '—'}</td>
+          <td>${row.farm_or_ticket || '—'}</td>
+          <td>${estAmt}</td>
+          <td>${row.est_unit || '—'}</td>
+          <td>${row.phone || '—'}</td>
+          <td>${row.probe_code || '—'}</td>
+          <td>${statusPill}</td>
+          <td>${actions}</td>
+        </tr>`;
+    }).join('');
+  }
+
+  // Action handlers
+  async function postJSON(path, body){
+    const r = await fetch(`${apiBase}${path}`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      credentials:'include',
+      body: JSON.stringify(body||{})
     });
-
-    $('tbody').innerHTML = rows.length ? rows.map(tr).join('') :
-      `<tr><td colspan="10" class="muted">No rows match.</td></tr>`;
+    const j = await r.json().catch(()=>({}));
+    if(!r.ok){ throw new Error(j?.error || r.statusText || 'Request failed'); }
+    return j;
   }
 
-  function tr(r){
-    const badge = r.status==='Reserved'
-      ? `<span class="tag ok">Reserved</span>`
-      : `<span class="tag">Open</span>`;
-    return `<tr>
-      <td class="mono">${esc(r.time||'')}</td>
-      <td>${esc(r.driver||'—')}</td>
-      <td class="mono">${esc(r.plate||'—')}</td>
-      <td>${esc(r.vendor||'—')}</td>
-      <td>${esc(r.farm_ticket||'—')}</td>
-      <td>${esc(r.est_amt||'—')}</td>
-      <td>${esc(r.est_unit||'—')}</td>
-      <td>${esc(r.phone||'—')}</td>
-      <td class="mono">${esc(r.probe_code||'—')}</td>
-      <td>${badge}</td>
-    </tr>`;
+  async function doAssign(slot_time){
+    const { site_id, date } = qsParams();
+    const phone = prompt('Driver phone (E.164 or 10 digits):');
+    if(!phone) return;
+    const body = { site_id, date, slot_time, phone };
+    try{
+      const j = await postJSON('/api/slots/assign', body);
+      alert(`Assigned ${slot_time}. Probe code: ${j?.reservation?.probe_code || j?.probe_code || '—'}`);
+      await loadAppointments();
+    }catch(err){
+      alert('Assign failed: '+err.message);
+    }
   }
+
+  async function doReassign(reservation_id){
+    const { site_id, date } = qsParams();
+    const to = prompt('New time (HH:MM):');
+    if(!to) return;
+    try{
+      const j = await postJSON('/api/slots/reassign', { reservation_id, site_id, date, to_slot_time: to });
+      alert(`Reassigned → ${to}. Probe code: ${j?.reservation?.probe_code || j?.probe_code || '—'}`);
+      await loadAppointments();
+    }catch(err){
+      alert('Reassign failed: '+err.message);
+    }
+  }
+
+  async function doCancel(reservation_id){
+    if(!confirm('Cancel this reservation?')) return;
+    try{
+      const j = await postJSON('/api/slots/cancel', { reservation_id });
+      alert(`Canceled. Probe code was: ${j?.reservation?.probe_code || j?.probe_code || '—'}`);
+      await loadAppointments();
+    }catch(err){
+      alert('Cancel failed: '+err.message);
+    }
+  }
+
+  rowsEl.addEventListener('click', (e)=>{
+    const btn = e.target.closest('button[data-act]');
+    if(!btn) return;
+    const act = btn.dataset.act;
+    const id  = btn.dataset.id;
+    const t   = btn.dataset.time;
+    if(act==='assign')   doAssign(t);
+    if(act==='reassign') doReassign(Number(id));
+    if(act==='cancel')   doCancel(Number(id));
+  });
+
+  // Wire controls
+  $('#btnRefresh').addEventListener('click', loadAppointments);
+  $('#site').addEventListener('change', loadAppointments);
+  $('#date').addEventListener('change', loadAppointments);
+  $('#filter').addEventListener('change', render);
+  $('#q').addEventListener('input', render);
+
+  $('#autoRefresh').addEventListener('change', function(){
+    if(this.checked){
+      timer = setInterval(loadAppointments, 30000);
+    }else if(timer){
+      clearInterval(timer); timer=null;
+    }
+  });
+
+  // Initial load
+  loadAppointments();
 })();
 </script>
 </body>
