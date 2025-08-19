@@ -1,75 +1,52 @@
 <!doctype html>
-<html lang="en">
+<html>
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Facility — Appointments</title>
   <style>
-    :root{--b:#e9eef3;--t:#222;--muted:#666;--line:#eceff3;--pill:#f5f7fa;--accent:#1e90ff;--good:#0a7a28;--bad:#b00020}
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:var(--t);background:#fff;margin:0}
-    .wrap{max-width:1100px;margin:18px auto;padding:0 14px}
-    .toolbar{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.75rem}
-    .toolbar .title{font-weight:800}
-    .btn{border:1px solid #d7dde4;background:#fff;border-radius:10px;padding:.45rem .75rem;cursor:pointer}
-    .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-    .btn.ghost{background:#f7f9fc}
-    .select,.input{border:1px solid #d7dde4;border-radius:10px;padding:.45rem .6rem}
-    .select{background:#fff}
-    .badge{display:inline-block;padding:.2rem .5rem;border-radius:999px;background:var(--pill);border:1px solid #e6ebf1;color:#334}
-    .badge.good{background:#eef9f0;border-color:#d7f0dc;color:var(--good)}
-    .badge.open{background:#f7fbff;border-color:#d7e9ff;color:#1f4b8f}
-    .note{font-size:.85rem;color:var(--muted)}
-    table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden}
-    th,td{padding:.6rem .65rem;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
-    thead th{background:#fafbfd;position:sticky;top:0;z-index:1}
-    .row-actions{display:flex;gap:.4rem;flex-wrap:wrap}
-    .err{color:var(--bad);font-size:.9rem}
-    .ok{color:var(--good);font-size:.9rem}
-    .statusbar{min-height:1.2em;margin:.25rem 0}
-    .pill{border:1px solid #e6ebf1;padding:.25rem .5rem;border-radius:999px;background:#fff}
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin:0; background:#f9f9f9; }
+    .container { max-width:1200px; margin:2rem auto; background:#fff; border:1px solid #ddd; border-radius:10px; padding:1.5rem; box-shadow:0 2px 6px rgba(0,0,0,.05); }
+    h1 { margin-top:0; font-size:1.4rem; }
+    table { width:100%; border-collapse:collapse; margin-top:1rem; }
+    th, td { padding:.6rem; border-bottom:1px solid #eee; text-align:left; font-size:.9rem; }
+    th { background:#f3f3f3; }
+    .status-open { color:#0a7a28; font-weight:bold; }
+    .status-reserved { color:#0057b7; font-weight:bold; }
+    .status-cancelled { color:#b00020; font-weight:bold; }
+    .btn { padding:.4rem .7rem; border-radius:6px; border:1px solid #ccc; background:#f7f7f7; cursor:pointer; }
+    .btn.primary { background:#1e90ff; color:#fff; border:none; }
+    .row { display:flex; align-items:center; gap:.6rem; margin-bottom:.8rem; flex-wrap:wrap; }
+    select, input { padding:.4rem .6rem; border:1px solid #ccc; border-radius:6px; }
+    .error { color:#b00020; margin-top:.5rem; }
+    .note { font-size:.8rem; color:#555; margin-top:.8rem; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-
-    <!-- Top bar -->
-    <div class="toolbar">
-      <span class="title">Facility — Appointments</span>
-      <a class="btn ghost" href="index.html">Home</a>
-      <a class="btn ghost" href="timeslots-select.html">Driver Site</a>
-
-      <span style="flex:1 0 8px"></span>
-
-      <label>Site
-        <select id="site" class="select">
-          <option value="east">East</option>
-          <option value="west">West</option>
-        </select>
-      </label>
-
-      <label>Date
-        <input id="date" class="input" type="date"/>
-      </label>
-
-      <button id="btnRefresh" class="btn">Refresh</button>
-      <label class="pill"><input id="autoRefresh" type="checkbox" style="vertical-align:-2px; margin-right:.4rem;">Auto‑refresh (30s)</label>
-
-      <label>Filter
-        <select id="filter" class="select">
-          <option value="all">All</option>
-          <option value="open">Open</option>
-          <option value="reserved">Reserved</option>
-          <option value="workin">Work‑in</option>
-        </select>
-      </label>
-
-      <input id="q" class="input" placeholder="Search name, plate, vendor, code…" style="min-width:220px"/>
+  <div class="container">
+    <h1>Facility — Appointments</h1>
+    <div class="row">
+      <a href="index.html" class="btn">Home</a>
+      <a href="timeslots-select.html" class="btn">Driver Site</a>
+      <label>Site</label>
+      <select id="site">
+        <option value="east">East</option>
+        <option value="west">West</option>
+      </select>
+      <label>Date</label>
+      <input type="date" id="date"/>
+      <button id="refresh" class="btn primary">Refresh</button>
+      <label><input type="checkbox" id="autoRefresh"/> Auto-refresh (30s)</label>
+      <label>Filter</label>
+      <select id="filter">
+        <option value="all">All</option>
+        <option value="open">Open</option>
+        <option value="reserved">Reserved</option>
+      </select>
+      <input type="text" id="search" placeholder="Search name, plate, vendor, code..."/>
     </div>
-
-    <div id="status" class="statusbar"></div>
-
-    <!-- Table -->
-    <table id="grid">
+    <div id="error" class="error"></div>
+    <table>
       <thead>
         <tr>
           <th>Time</th>
@@ -82,221 +59,108 @@
           <th>Phone</th>
           <th>Probe Code</th>
           <th>Status</th>
-          <th style="width:220px">Actions</th>
+          <th>Actions</th>
         </tr>
       </thead>
       <tbody id="rows">
-        <tr><td colspan="11" class="note">Loading…</td></tr>
+        <tr><td colspan="11">Loading…</td></tr>
       </tbody>
     </table>
-
-    <p class="note" style="margin-top:.6rem;">
-      * “Probe Code” is the 4‑digit confirmation your backend returns as <code>probe_code</code>, used at the probe desk to match the driver to the load.
-    </p>
+    <div class="note">* "Probe Code" is the 4-digit confirmation used by the probe desk to match the driver to the load.</div>
   </div>
 
 <script>
 (function(){
-  const apiBase = ''; // same origin
-  const $ = sel => document.querySelector(sel);
-  const rowsEl = $('#rows');
-  const statusEl = $('#status');
+  const apiBase = '';
+  const $ = id => document.getElementById(id);
+  let timer;
 
-  // Defaults (today, site=stored or east)
-  const todayISO = new Date().toISOString().slice(0,10);
-  const savedSite = localStorage.getItem('facility_site') || 'east';
-  $('#date').value = todayISO;
-  $('#site').value = savedSite;
+  async function load(){
+    clearTimeout(timer);
+    const site = $('site').value;
+    const date = $('date').value;
+    const filter = $('filter').value;
+    const search = $('search').value.trim();
+    const rows = $('rows');
+    const err = $('error');
+    err.textContent = '';
+    rows.innerHTML = '<tr><td colspan="11">Loading…</td></tr>';
 
-  let lastData = [];
-  let timer = null;
-
-  function setStatus(msg, ok=false){
-    statusEl.textContent = msg || '';
-    statusEl.className = ok ? 'statusbar ok' : (msg ? 'statusbar err' : 'statusbar');
-  }
-
-  function qsParams(){
-    const site_id = $('#site').value;
-    const date = $('#date').value;
-    return { site_id, date };
-  }
-
-  async function loadAppointments(){
-    const { site_id, date } = qsParams();
-    if (!site_id || !date){
-      setStatus('Pick a site and date.');
-      return;
-    }
-    localStorage.setItem('facility_site', site_id);
-
-    const url = `${apiBase}/api/appointments?site_id=${encodeURIComponent(site_id)}&date=${encodeURIComponent(date)}`;
     try{
-      setStatus(`Loading ${site_id.toUpperCase()} · ${date} …`, true);
-      const r = await fetch(url, { credentials:'include' });
+      const r = await fetch(apiBase+'/api/appointments',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ site_id:site, date })
+      });
       const j = await r.json().catch(()=>({}));
-      if(!r.ok){
-        setStatus(`Load failed: ${url.split('?')[0]} ${r.status} ${JSON.stringify(j)}`);
-        rowsEl.innerHTML = `<tr><td colspan="11" class="err">Error loading data. Check Console (DevTools) for details.</td></tr>`;
-        console.error('Appointments load failed', r.status, j);
+      if(!r.ok || j.error) throw new Error(j.error||r.statusText);
+
+      let list = j.appointments || [];
+      if(filter!=='all') list = list.filter(x=>x.status.toLowerCase()===filter);
+      if(search){
+        const q = search.toLowerCase();
+        list = list.filter(x=>
+          (x.driver||'').toLowerCase().includes(q) ||
+          (x.plate||'').toLowerCase().includes(q) ||
+          (x.vendor||'').toLowerCase().includes(q) ||
+          (x.queue_code||'').toLowerCase().includes(q)
+        );
+      }
+
+      if(!list.length){
+        rows.innerHTML = '<tr><td colspan="11">No appointments found.</td></tr>';
         return;
       }
-      lastData = Array.isArray(j) ? j : (j.data || []);
-      render();
-      setStatus(`Loaded ${lastData.length} rows.`, true);
-    }catch(err){
-      console.error(err);
-      setStatus(`Network error: ${err?.message||err}`);
-      rowsEl.innerHTML = `<tr><td colspan="11" class="err">Network error. Try refresh.</td></tr>`;
-    }
-  }
 
-  // Client‑side filter/search
-  function filtered(){
-    const f = $('#filter').value;
-    const q = ($('#q').value||'').trim().toLowerCase();
-    return lastData.filter(r=>{
-      if(f!=='all'){
-        const s = (r.status||'').toLowerCase();
-        if(f==='open' && s!=='open') return false;
-        if(f==='reserved' && s!=='reserved') return false;
-        if(f==='workin' && !r.is_workin) return false;
-      }
-      if(q){
-        const blob = [
-          r.driver_name, r.license_plate, r.vendor_name,
-          r.farm_or_ticket, r.phone, r.probe_code, r.slot_time
-        ].map(x=>String(x||'').toLowerCase()).join(' ');
-        if(!blob.includes(q)) return false;
-      }
-      return true;
-    });
-  }
-
-  function pill(text, cls=''){
-    const c = cls ? `badge ${cls}` : 'badge';
-    return `<span class="${c}">${text}</span>`;
-  }
-
-  function render(){
-    const data = filtered();
-    if(!data.length){
-      rowsEl.innerHTML = `<tr><td colspan="11" class="note">No appointments found.</td></tr>`;
-      return;
-    }
-    rowsEl.innerHTML = data.map(row=>{
-      const status = (row.status||'open').toLowerCase();
-      const statusPill =
-        status==='reserved' ? pill('Reserved','good') :
-        pill('Open','open');
-
-      const assignBtn = `<button class="btn" data-act="assign" data-id="${row.reservation_id||''}" data-time="${row.slot_time}">Assign</button>`;
-      const reBtn    = `<button class="btn" data-act="reassign" data-id="${row.reservation_id||''}" data-time="${row.slot_time}">Reassign</button>`;
-      const cancelBtn= `<button class="btn" data-act="cancel" data-id="${row.reservation_id||''}">Cancel</button>`;
-
-      const actions =
-        status==='reserved'
-          ? `<div class="row-actions">${reBtn}${cancelBtn}</div>`
-          : `<div class="row-actions">${assignBtn}</div>`;
-
-      const estAmt = (row.est_amount!=null && row.est_amount!=='') ? row.est_amount : '—';
-
-      return `
+      rows.innerHTML = list.map(x=>`
         <tr>
-          <td>${row.slot_time || '—'}</td>
-          <td>${row.driver_name || '—'}</td>
-          <td>${row.license_plate || '—'}</td>
-          <td>${row.vendor_name || '—'}</td>
-          <td>${row.farm_or_ticket || '—'}</td>
-          <td>${estAmt}</td>
-          <td>${row.est_unit || '—'}</td>
-          <td>${row.phone || '—'}</td>
-          <td>${row.probe_code || '—'}</td>
-          <td>${statusPill}</td>
-          <td>${actions}</td>
-        </tr>`;
-    }).join('');
-  }
+          <td>${x.time||''}</td>
+          <td>${x.driver||''}</td>
+          <td>${x.plate||''}</td>
+          <td>${x.vendor||''}</td>
+          <td>${x.farm_ticket||''}</td>
+          <td>${x.est_amount||''}</td>
+          <td>${x.unit||''}</td>
+          <td>${x.phone||''}</td>
+          <td>${x.queue_code||'-'}</td>
+          <td class="status-${(x.status||'').toLowerCase()}">${x.status||''}</td>
+          <td>
+            ${x.status==='Open' ? `<button class="btn primary" onclick="assign('${x.id}')">Assign</button>` : `
+              <button class="btn" onclick="reassign('${x.id}')">Reassign</button>
+              <button class="btn" onclick="cancelRes('${x.id}')">Cancel</button>
+            `}
+          </td>
+        </tr>
+      `).join('');
 
-  // Action handlers
-  async function postJSON(path, body){
-    const r = await fetch(`${apiBase}${path}`, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      credentials:'include',
-      body: JSON.stringify(body||{})
-    });
-    const j = await r.json().catch(()=>({}));
-    if(!r.ok){ throw new Error(j?.error || r.statusText || 'Request failed'); }
-    return j;
-  }
+    }catch(e){
+      err.textContent = 'Load failed: '+e.message;
+      rows.innerHTML = '<tr><td colspan="11">Error loading data.</td></tr>';
+    }
 
-  async function doAssign(slot_time){
-    const { site_id, date } = qsParams();
-    const phone = prompt('Driver phone (E.164 or 10 digits):');
-    if(!phone) return;
-    const body = { site_id, date, slot_time, phone };
-    try{
-      const j = await postJSON('/api/slots/assign', body);
-      alert(`Assigned ${slot_time}. Probe code: ${j?.reservation?.probe_code || j?.probe_code || '—'}`);
-      await loadAppointments();
-    }catch(err){
-      alert('Assign failed: '+err.message);
+    if($('autoRefresh').checked){
+      timer = setTimeout(load, 30000);
     }
   }
 
-  async function doReassign(reservation_id){
-    const { site_id, date } = qsParams();
-    const to = prompt('New time (HH:MM):');
-    if(!to) return;
-    try{
-      const j = await postJSON('/api/slots/reassign', { reservation_id, site_id, date, to_slot_time: to });
-      alert(`Reassigned → ${to}. Probe code: ${j?.reservation?.probe_code || j?.probe_code || '—'}`);
-      await loadAppointments();
-    }catch(err){
-      alert('Reassign failed: '+err.message);
-    }
+  window.assign = async function(id){
+    alert('Assign flow would POST /api/slots/reserve {slot_id:'+id+'}');
+  }
+  window.reassign = async function(id){
+    alert('Reassign flow would POST /api/slots/reassign {reservation_id:'+id+'}');
+  }
+  window.cancelRes = async function(id){
+    alert('Cancel flow would POST /api/slots/cancel {reservation_id:'+id+'}');
   }
 
-  async function doCancel(reservation_id){
-    if(!confirm('Cancel this reservation?')) return;
-    try{
-      const j = await postJSON('/api/slots/cancel', { reservation_id });
-      alert(`Canceled. Probe code was: ${j?.reservation?.probe_code || j?.probe_code || '—'}`);
-      await loadAppointments();
-    }catch(err){
-      alert('Cancel failed: '+err.message);
-    }
-  }
+  $('refresh').addEventListener('click', load);
+  $('site').addEventListener('change', load);
+  $('date').addEventListener('change', load);
+  $('filter').addEventListener('change', load);
+  $('search').addEventListener('input', load);
 
-  rowsEl.addEventListener('click', (e)=>{
-    const btn = e.target.closest('button[data-act]');
-    if(!btn) return;
-    const act = btn.dataset.act;
-    const id  = btn.dataset.id;
-    const t   = btn.dataset.time;
-    if(act==='assign')   doAssign(t);
-    if(act==='reassign') doReassign(Number(id));
-    if(act==='cancel')   doCancel(Number(id));
-  });
-
-  // Wire controls
-  $('#btnRefresh').addEventListener('click', loadAppointments);
-  $('#site').addEventListener('change', loadAppointments);
-  $('#date').addEventListener('change', loadAppointments);
-  $('#filter').addEventListener('change', render);
-  $('#q').addEventListener('input', render);
-
-  $('#autoRefresh').addEventListener('change', function(){
-    if(this.checked){
-      timer = setInterval(loadAppointments, 30000);
-    }else if(timer){
-      clearInterval(timer); timer=null;
-    }
-  });
-
-  // Initial load
-  loadAppointments();
+  $('date').value = new Date().toISOString().split('T')[0];
+  load();
 })();
 </script>
 </body>
