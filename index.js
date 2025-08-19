@@ -1,97 +1,42 @@
-// index.js — Cargill Virtual Line (full)
-// Node 18+ / ESM
+// index.js  —  CommonJS backend for Cargill Soy Virtual Line
+// Run: node index.js
 
-import express from 'express';
-import cookieParser from 'cookie-parser';
-import Database from 'better-sqlite3';
-import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
-import url from 'url';
-import cors from 'cors';
+require('dotenv').config();
 
-// ---------- Setup & ENV ----------
-const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
-const app = express();
-const db = new Database('data.db');
+const path = require('path');
+const express = require('express');
+const bodyParser = require('body-parser');
+const cors = require('cors');
+const Database = require('better-sqlite3');
+const { nanoid } = require('nanoid');
 
-// Load .env (simple loader for local dev; Render uses process.env)
-const ENV = {};
-try {
-  const txt = fs.readFileSync(path.join(__dirname, '.env'), 'utf8');
-  for (const line of txt.split(/\r?\n/)) {
-    const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
-    if (m) ENV[m[1]] = m[2];
-  }
-} catch { /* no local .env */ }
+// ---------- Config ----------
+const PORT = process.env.PORT || 10000;
+const DB_PATH = process.env.DB_PATH || 'data.db';
+const ADMIN_KEY = process.env.ADMIN_KEY || '';
+const CORS_ORIGIN = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
 
-const getEnv = (k, def='') => process.env[k] ?? ENV[k] ?? def;
+// ---------- CORS (with credentials) ----------
+const corsMw = cors({
+  origin(origin, cb) {
+    if (!origin) return cb(null, true); // allow same-origin/direct
+    if (CORS_ORIGIN.length === 0) return cb(null, true); // permissive if not set
+    if (CORS_ORIGIN.includes(origin)) return cb(null, true);
+    cb(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-Key'],
+});
 
-const ORIGIN = getEnv('CORS_ORIGIN', 'http://localhost:10000'); // e.g. https://cargill-line-1.onrender.com
-const SESSION_SECRET = getEnv('SESSION_SECRET', 'dev_secret');
-
-const TWILIO_SID = getEnv('TWILIO_SID');
-const TWILIO_AUTH = getEnv('TWILIO_AUTH_TOKEN');
-const TWILIO_FROM = getEnv('TWILIO_PHONE_NUMBER');
-
-// Twilio client (optional)
-let twilioClient = null;
-if (TWILIO_SID && TWILIO_AUTH) {
-  try {
-    const twilioPkg = await import('twilio');
-    twilioClient = twilioPkg.default(TWILIO_SID, TWILIO_AUTH);
-    console.log('Twilio: client initialized');
-  } catch (e) {
-    console.warn('Twilio init failed:', e?.message || e);
-  }
-} else {
-  console.warn('Twilio: missing credentials; SMS will be stubbed');
-}
-
-// ---------- Middleware ----------
-app.use(express.json());
-app.use(cookieParser(SESSION_SECRET));
-app.use(
-  cors({
-    origin: ORIGIN,
-    credentials: true,
-  })
-);
-
-// Static files
-app.use(express.static(path.join(__dirname, 'public')));
-
-// ---------- Helpers ----------
-function normalizePhone(p) {
-  const d = String(p || '').replace(/\D/g, '');
-  const m = d.match(/^1?(\d{10})$/);
-  return m ? `+1${m[1]}` : null;
-}
-function minutes(hhmm) {
-  const [h, m] = String(hhmm).split(':').map(Number);
-  return h * 60 + m;
-}
-function hhmm(min) {
-  return (
-    String(Math.floor(min / 60)).padStart(2, '0') +
-    ':' +
-    String(min % 60).padStart(2, '0')
-  );
-}
-function todayLocalISO() {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 10);
-}
-function expireHolds() {
-  db.prepare(
-    "UPDATE time_slots SET hold_token=NULL, hold_expires_at=NULL WHERE hold_expires_at IS NOT NULL AND hold_expires_at < CURRENT_TIMESTAMP"
-  ).run();
-}
-
-// ---------- DB bootstrap (minimal) ----------
+// ---------- DB ----------
+const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
-// Create tables if not present
+
+// Minimal idempotent schema (won't clash with migrate.js)
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
   phone TEXT PRIMARY KEY,
@@ -126,7 +71,7 @@ CREATE TABLE IF NOT EXISTS time_slots (
   site_id INTEGER NOT NULL,
   date TEXT NOT NULL,
   slot_time TEXT NOT NULL,
-  is_workin INTEGER DEFAULT 0, -- 0 regular, 1 work-in
+  is_workin INTEGER DEFAULT 0,
   reserved_truck_id INTEGER,
   reserved_at TEXT,
   hold_token TEXT,
@@ -147,8 +92,12 @@ CREATE TABLE IF NOT EXISTS slot_reservations (
   est_amount REAL,
   est_unit TEXT,
   manage_token TEXT,
+  queue_code TEXT, -- 4-digit Probe Code
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+CREATE INDEX IF NOT EXISTS idx_slots ON time_slots(site_id, date, slot_time);
+CREATE INDEX IF NOT EXISTS idx_resv_lookup ON slot_reservations(site_id, date, slot_time);
+CREATE INDEX IF NOT EXISTS idx_resv_probe ON slot_reservations(site_id, date, queue_code);
 CREATE TABLE IF NOT EXISTS facility_info (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   facility_phone TEXT,
@@ -158,458 +107,485 @@ CREATE TABLE IF NOT EXISTS facility_info (
 INSERT OR IGNORE INTO facility_info (id) VALUES (1);
 `);
 
+// ---------- Twilio (optional) ----------
+let twilioClient = null;
+const hasTwilio =
+  !!process.env.TWILIO_ACCOUNT_SID &&
+  !!process.env.TWILIO_AUTH_TOKEN &&
+  (!!process.env.TWILIO_PHONE_NUMBER || !!process.env.TWILIO_MESSAGING_SERVICE_SID);
+
+if (hasTwilio) {
+  twilioClient = require('twilio')(
+    process.env.TWILIO_ACCOUNT_SID,
+    process.env.TWILIO_AUTH_TOKEN
+  );
+  console.log('Twilio: client initialized');
+} else {
+  console.log('Twilio: not configured, using console mock');
+}
+
+async function sendSMS(to, body) {
+  if (!hasTwilio) {
+    console.log('[MOCK SMS]', to, body);
+    return { sent: true, sid: 'mock-' + nanoid(8) };
+  }
+  const payload = {
+    to,
+    body,
+  };
+  if (process.env.TWILIO_MESSAGING_SERVICE_SID) {
+    payload.messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID;
+  } else {
+    payload.from = process.env.TWILIO_PHONE_NUMBER;
+  }
+  try {
+    const msg = await twilioClient.messages.create(payload);
+    return { sent: true, sid: msg.sid };
+  } catch (e) {
+    console.error('SMS ERROR:', e?.message || e);
+    return { sent: false, error: e?.message || String(e) };
+  }
+}
+
+// ---------- Helpers ----------
+const SITES = [
+  { id: 1, name: 'East' },
+  { id: 2, name: 'West' },
+];
+const siteName = (id) => (SITES.find(s => s.id === Number(id))?.name || `Site ${id}`);
+
+const app = express();
+app.set('trust proxy', 1);
+app.use(corsMw);
+app.use(bodyParser.json());
+
+// cookie helper (no cookie-parser needed to set)
+function setSessionCookie(res, token) {
+  res.cookie('session', token, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'none',
+    path: '/',
+    maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
+  });
+}
+
+const normalizePhone = (p) => {
+  const d = String(p || '').replace(/\D/g, '');
+  if (/^\d{10}$/.test(d)) return '+1' + d;
+  const m = d.match(/^1?(\d{10})$/);
+  return m ? '+1' + m[1] : null;
+};
+const random6 = () => String(Math.floor(100000 + Math.random() * 900000));
+const random4 = () => String(Math.floor(1000 + Math.random() * 9000));
+
 // ---------- Auth (OTP) ----------
 app.post('/auth/request-code', async (req, res) => {
   try {
     const phone = normalizePhone(req.body?.phone);
-    if (!phone) return res.status(400).json({ error: 'invalid phone' });
+    const role = (req.body?.role || '').toLowerCase(); // 'admin' or ''
+    if (!phone) return res.status(400).json({ ok: false, error: 'Invalid phone' });
 
-    const u = db
-      .prepare('SELECT is_banned FROM users WHERE phone=?')
-      .get(phone);
-    if (u?.is_banned) return res.status(403).json({ error: 'number suspended' });
-
-    const code = String(Math.floor(100000 + Math.random() * 900000));
-    const expires = db.prepare("SELECT datetime('now','+5 minutes') as e").get().e;
+    const code = random6();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
     db.prepare(
-      'INSERT INTO otp_codes (phone, code, expires_at, attempts_left) VALUES (?,?,?,5)'
-    ).run(phone, code, expires);
+      `INSERT INTO otp_codes (phone, code, expires_at, attempts_left)
+       VALUES (?, ?, ?, 5)`
+    ).run(phone, code, expiresAt);
 
-    // Send SMS
-    let sms = { sent: false };
-    if (twilioClient && TWILIO_FROM) {
-      try {
-        const msg = await twilioClient.messages.create({
-          from: TWILIO_FROM,
-          to: phone,
-          body: `Your verification code is ${code}. It expires in 5 minutes. Reply STOP to opt out.`,
-        });
-        sms = { sent: true, sid: msg.sid, status: msg.status };
-      } catch (err) {
-        console.warn('Twilio SMS error:', err?.message || err);
-        sms = { sent: false, error: 'twilio_error' };
-      }
-    } else {
-      console.log(`[DEV] OTP for ${phone}: ${code}`);
-      sms = { sent: true, dev: true };
-    }
+    const smsText =
+      role === 'admin'
+        ? `Cargill Admin code: ${code}. Valid 5 min. Reply STOP to opt out.`
+        : `Cargill code: ${code}. Valid 5 min. Reply STOP to opt out.`;
+
+    const sms = await sendSMS(phone, smsText);
 
     return res.json({ ok: true, sms });
   } catch (e) {
-    console.error('/auth/request-code', e);
-    return res.status(500).json({ error: 'server error' });
+    console.error(e);
+    res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
 
 app.post('/auth/verify', (req, res) => {
   try {
     const phone = normalizePhone(req.body?.phone);
-    const code = String(req.body?.code || '');
-    if (!phone || !/^\d{6}$/.test(code))
-      return res.status(400).json({ error: 'bad input' });
+    const code = String(req.body?.code || '').trim();
+    if (!phone || !/^\d{6}$/.test(code)) {
+      return res.status(400).json({ ok: false, error: 'Invalid phone/code' });
+    }
 
+    const nowIso = new Date().toISOString();
     const row = db
       .prepare(
-        "SELECT * FROM otp_codes WHERE phone=? AND consumed_at IS NULL AND expires_at > CURRENT_TIMESTAMP ORDER BY id DESC LIMIT 1"
+        `SELECT * FROM otp_codes
+         WHERE phone = ? AND code = ? AND consumed_at IS NULL
+           AND expires_at > ?
+           AND attempts_left > 0
+         ORDER BY id DESC LIMIT 1`
       )
-      .get(phone);
-    if (!row) return res.status(400).json({ error: 'code expired' });
-    if (row.attempts_left <= 0)
-      return res.status(429).json({ error: 'too many attempts' });
+      .get(phone, code, nowIso);
 
-    if (row.code !== code) {
-      db.prepare('UPDATE otp_codes SET attempts_left=attempts_left-1 WHERE id=?').run(
-        row.id
-      );
-      return res.status(400).json({ error: 'incorrect code' });
+    if (!row) {
+      // decrement attempts for newest active code for that phone
+      db.prepare(
+        `UPDATE otp_codes
+           SET attempts_left = MAX(attempts_left - 1, 0)
+         WHERE phone = ? AND consumed_at IS NULL AND expires_at > ?`
+      ).run(phone, nowIso);
+      return res.status(401).json({ ok: false, error: 'invalid_or_expired' });
     }
 
-    db.prepare('INSERT OR IGNORE INTO users (phone) VALUES (?)').run(phone);
-    db.prepare('UPDATE users SET last_login_at=CURRENT_TIMESTAMP WHERE phone=?').run(
-      phone
-    );
-    db.prepare('UPDATE otp_codes SET consumed_at=CURRENT_TIMESTAMP WHERE id=?').run(
-      row.id
-    );
+    db.prepare(`UPDATE otp_codes SET consumed_at = ? WHERE id = ?`).run(nowIso, row.id);
 
-    const token = crypto.randomUUID();
-    db.prepare('INSERT INTO sessions (token, phone) VALUES (?,?)').run(token, phone);
+    // create session
+    const token = nanoid(24);
+    db.prepare(`INSERT INTO sessions (token, phone) VALUES (?, ?)`).run(token, phone);
+    setSessionCookie(res, token);
 
-    res.cookie('session', token, {
-      httpOnly: true,
-      sameSite: 'lax', // works from your Render origin
-      maxAge: 7 * 24 * 3600 * 1000,
-    });
-    return res.json({ ok: true });
+    // upsert user record
+    db.prepare(
+      `INSERT INTO users (phone, last_login_at) VALUES (?, ?)
+       ON CONFLICT(phone) DO UPDATE SET last_login_at=excluded.last_login_at`
+    ).run(phone, nowIso);
+
+    return res.json({ ok: true, token });
   } catch (e) {
-    console.error('/auth/verify', e);
-    return res.status(500).json({ error: 'server error' });
+    console.error(e);
+    res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
 
-function requireAuth(req, res, next) {
-  const token = req.cookies?.session;
-  if (!token) return res.status(401).json({ error: 'auth required' });
-  const s = db.prepare('SELECT phone FROM sessions WHERE token=?').get(token);
-  if (!s) return res.status(401).json({ error: 'invalid session' });
-  const u = db.prepare('SELECT is_banned FROM users WHERE phone=?').get(s.phone);
-  if (u?.is_banned) return res.status(403).json({ error: 'number suspended' });
-  req.user = { phone: s.phone };
-  next();
-}
-
-// ---------- Facility info ----------
-app.get('/api/facility/info', (req, res) => {
-  const row = db
-    .prepare('SELECT facility_phone, support_phone FROM facility_info WHERE id=1')
-    .get();
-  res.json(row || {});
+// ---------- Sites & Slots ----------
+app.get('/api/sites', (req, res) => {
+  res.json({ ok: true, sites: SITES });
 });
 
-app.post('/api/facility/info', requireAuth, (req, res) => {
-  const { facility_phone, support_phone } = req.body || {};
-  db.prepare(
-    'UPDATE facility_info SET facility_phone=?, support_phone=?, updated_at=CURRENT_TIMESTAMP WHERE id=1'
-  ).run(facility_phone, support_phone);
-  res.json({ ok: true });
-});
-
-// ---------- Schedule builder ----------
-app.post('/api/sites/:id/schedule', requireAuth /* optional: protect */, (req, res) => {
+// GET /api/slots?site=1&date=YYYY-MM-DD
+// returns array of {time, status:'open'|'reserved', reservation?}
+app.get('/api/slots', (req, res) => {
   try {
-    const site_id = Number(req.params.id);
-    const { date, open_time, close_time, loads_target, workins_per_hour = 0 } =
-      req.body || {};
-    if (!site_id || !date || !open_time || !close_time || !loads_target) {
-      return res.status(400).json({ error: 'missing fields' });
-    }
+    const site = Number(req.query.site || 1);
+    const date = String(req.query.date || '').slice(0, 10);
+    if (!date) return res.status(400).json({ ok: false, error: 'date_required' });
 
-    // EAST(1)=5m, WEST(2)=6m
-    const minInt = site_id === 2 ? 6 : 5;
+    const times = db
+      .prepare(
+        `SELECT t.site_id, t.date, t.slot_time,
+                r.id as reservation_id, r.driver_name, r.license_plate, r.vendor_name,
+                r.farm_or_ticket, r.est_amount, r.est_unit, r.driver_phone, r.queue_code
+           FROM time_slots t
+           LEFT JOIN slot_reservations r
+                  ON r.site_id=t.site_id AND r.date=t.date AND r.slot_time=t.slot_time
+          WHERE t.site_id = ? AND t.date = ?
+          ORDER BY t.slot_time`
+      )
+      .all(site, date);
 
-    const start = minutes(open_time);
-    const end = minutes(close_time);
-    const dur = Math.max(0, end - start);
-
-    let interval = 0;
-    if (loads_target > 1)
-      interval = Math.max(minInt, Math.floor(dur / (loads_target - 1)));
-
-    const tx = db.transaction(() => {
-      db.prepare(
-        `INSERT INTO site_settings (site_id, date, loads_target, open_time, close_time, workins_per_hour)
-         VALUES (?,?,?,?,?,?)
-         ON CONFLICT(site_id, date) DO UPDATE SET
-           loads_target=excluded.loads_target,
-           open_time=excluded.open_time,
-           close_time=excluded.close_time,
-           workins_per_hour=excluded.workins_per_hour`
-      ).run(site_id, date, loads_target, open_time, close_time, workins_per_hour);
-
-      // create target slots
-      const ins = db.prepare(
-        'INSERT OR IGNORE INTO time_slots (site_id,date,slot_time,is_workin) VALUES (?,?,?,0)'
-      );
-      if (loads_target >= 1) {
-        for (let i = 0; i < loads_target; i++) {
-          const t = start + i * interval;
-          if (t <= end) ins.run(site_id, date, hhmm(t));
-        }
-      }
-
-      // optional work-ins (evenly spaced)
-      if (workins_per_hour > 0) {
-        const step = Math.floor(60 / workins_per_hour);
-        for (let h = Math.floor(start / 60); h <= Math.floor(end / 60); h++) {
-          for (let k = 0; k < workins_per_hour; k++) {
-            const tm = h * 60 + k * step;
-            if (tm >= start && tm <= end) {
-              db.prepare(
-                'INSERT OR IGNORE INTO time_slots (site_id,date,slot_time,is_workin) VALUES (?,?,?,1)'
-              ).run(site_id, date, hhmm(tm));
-            }
+    const out = times.map((row) => ({
+      time: row.slot_time,
+      status: row.reservation_id ? 'reserved' : 'open',
+      reservation: row.reservation_id
+        ? {
+            id: row.reservation_id,
+            driver_name: row.driver_name,
+            license_plate: row.license_plate,
+            vendor_name: row.vendor_name,
+            farm_or_ticket: row.farm_or_ticket,
+            est_amount: row.est_amount,
+            est_unit: row.est_unit,
+            driver_phone: row.driver_phone,
+            probe_code: row.queue_code || null,
           }
-        }
-      }
-    });
-    tx();
+        : null,
+    }));
 
-    res.json({ ok: true, interval_min: interval });
+    res.json({ ok: true, site, date, slots: out });
   } catch (e) {
-    console.error('/api/sites/:id/schedule', e);
-    res.status(500).json({ error: 'server error' });
+    console.error(e);
+    res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
 
-// ---------- Open slots ----------
-app.get('/api/sites/:id/slots', (req, res) => {
-  expireHolds();
-  const site_id = Number(req.params.id);
-  const date = req.query?.date || todayLocalISO();
-  if (!site_id) return res.status(400).json({ error: 'site_id required' });
-  const rows = db
-    .prepare(
-      'SELECT slot_time FROM time_slots WHERE site_id=? AND date=? AND reserved_truck_id IS NULL AND hold_token IS NULL ORDER BY slot_time'
-    )
-    .all(site_id, date);
-  res.json(rows.map((r) => r.slot_time));
-});
-
-// ---------- Hold / confirm / release ----------
-app.post('/api/slots/hold', (req, res) => {
-  expireHolds();
-  const { site_id, date, slot_time } = req.body || {};
-  if (!site_id || !date || !slot_time)
-    return res.status(400).json({ error: 'missing params' });
-  const row = db
-    .prepare(
-      'SELECT id, reserved_truck_id, hold_token, hold_expires_at FROM time_slots WHERE site_id=? AND date=? AND slot_time=?'
-    )
-    .get(site_id, date, slot_time);
-  if (!row) return res.status(404).json({ error: 'slot not found' });
-  if (row.reserved_truck_id) return res.status(409).json({ error: 'slot reserved' });
-  if (row.hold_token && new Date(row.hold_expires_at) > new Date())
-    return res.status(409).json({ error: 'slot on hold' });
-
-  const token = crypto.randomUUID();
-  db.prepare(
-    "UPDATE time_slots SET hold_token=?, hold_expires_at=datetime('now','+120 seconds') WHERE id=?"
-  ).run(token, row.id);
-  const expires = db
-    .prepare('SELECT hold_expires_at as e FROM time_slots WHERE id=?')
-    .get(row.id).e;
-
-  res.json({ hold_token: token, expires_at: expires });
-});
-
-app.post('/api/slots/confirm', async (req, res) => {
-  expireHolds();
-  const { hold_token } = req.body || {};
-  if (!hold_token) return res.status(400).json({ error: 'hold_token required' });
-  const slot = db
-    .prepare(
-      'SELECT * FROM time_slots WHERE hold_token=? AND hold_expires_at > CURRENT_TIMESTAMP'
-    )
-    .get(hold_token);
-  if (!slot) return res.status(410).json({ error: 'hold expired or invalid' });
-
-  const p = req.body || {};
-  const manage_token = crypto.randomUUID();
-  const ins = db.prepare(
-    `INSERT INTO slot_reservations
-    (site_id,date,slot_time,truck_id,license_plate,driver_name,driver_phone,vendor_name,farm_or_ticket,est_amount,est_unit,manage_token)
-    VALUES (@site_id,@date,@slot_time,@truck_id,@license_plate,@driver_name,@driver_phone,@vendor_name,@farm_or_ticket,@est_amount,@est_unit,@manage_token)`
-  );
-  const info = ins.run({
-    site_id: slot.site_id,
-    date: slot.date,
-    slot_time: slot.slot_time,
-    truck_id: null,
-    license_plate: p.license_plate || null,
-    driver_name: p.driver_name || null,
-    driver_phone: normalizePhone(p.driver_phone) || null,
-    vendor_name: p.vendor_name || null,
-    farm_or_ticket: p.farm_or_ticket || null,
-    est_amount: p.est_amount || null,
-    est_unit: (p.est_unit || 'BUSHELS').toUpperCase(),
-    manage_token,
-  });
-
-  db.prepare(
-    'UPDATE time_slots SET reserved_truck_id=?, reserved_at=CURRENT_TIMESTAMP, hold_token=NULL, hold_expires_at=NULL WHERE id=?'
-  ).run(info.lastInsertRowid, slot.id);
-
-  // Confirmation SMS (best-effort)
-  const rrow = db
-    .prepare('SELECT * FROM slot_reservations WHERE id=?')
-    .get(info.lastInsertRowid);
-  if (twilioClient && TWILIO_FROM && rrow?.driver_phone) {
-    try {
-      await twilioClient.messages.create({
-        from: TWILIO_FROM,
-        to: rrow.driver_phone,
-        body: `Cargill: Confirmed ${rrow.date} at ${rrow.slot_time} (${rrow.site_id===1?'EAST':'WEST'}). Reply STOP to opt out.`,
-      });
-    } catch (e) {
-      console.warn('Twilio confirm SMS error:', e?.message || e);
-    }
-  }
-
-  res
-    .status(201)
-    .json({ ok: true, reservation_id: info.lastInsertRowid, manage_token, slot_time: slot.slot_time });
-});
-
-app.post('/api/slots/release', (req, res) => {
-  const { hold_token } = req.body || {};
-  if (!hold_token) return res.status(400).json({ error: 'hold_token required' });
-  db.prepare(
-    'UPDATE time_slots SET hold_token=NULL, hold_expires_at=NULL WHERE hold_token=?'
-  ).run(hold_token);
-  res.json({ ok: true });
-});
-
-// ---------- Reassign / cancel / mass-cancel ----------
-app.post('/api/slots/reassign', requireAuth, (req, res) => {
-  const { reservation_id, to_slot_time } = req.body || {};
-  if (!reservation_id || !to_slot_time)
-    return res.status(400).json({ error: 'missing fields' });
-  const r = db.prepare('SELECT * FROM slot_reservations WHERE id=?').get(reservation_id);
-  if (!r) return res.status(404).json({ error: 'reservation not found' });
-  const target = db
-    .prepare('SELECT * FROM time_slots WHERE site_id=? AND date=? AND slot_time=?')
-    .get(r.site_id, r.date, to_slot_time);
-  if (!target) return res.status(404).json({ error: 'target slot not found' });
-  if (target.reserved_truck_id) return res.status(409).json({ error: 'target slot taken' });
-
-  const tx = db.transaction(() => {
-    db.prepare(
-      'UPDATE time_slots SET reserved_truck_id=NULL, reserved_at=NULL WHERE site_id=? AND date=? AND slot_time=? AND reserved_truck_id=?'
-    ).run(r.site_id, r.date, r.slot_time, r.id);
-    db.prepare('UPDATE time_slots SET reserved_truck_id=?, reserved_at=CURRENT_TIMESTAMP WHERE id=?').run(
-      r.id,
-      target.id
-    );
-    db.prepare('UPDATE slot_reservations SET slot_time=? WHERE id=?').run(to_slot_time, reservation_id);
-  });
-  tx();
-  res.json({ ok: true });
-});
-
-app.post('/api/slots/cancel', requireAuth, async (req, res) => {
-  const { reservation_id, reason } = req.body || {};
-  if (!reservation_id) return res.status(400).json({ error: 'reservation_id required' });
-  const r = db.prepare('SELECT * FROM slot_reservations WHERE id=?').get(reservation_id);
-  if (!r) return res.status(404).json({ error: 'not found' });
-
-  const tx = db.transaction(() => {
-    db.prepare(
-      'UPDATE time_slots SET reserved_truck_id=NULL, reserved_at=NULL WHERE site_id=? AND date=? AND slot_time=? AND reserved_truck_id=?'
-    ).run(r.site_id, r.date, r.slot_time, r.id);
-    db.prepare('DELETE FROM slot_reservations WHERE id=?').run(reservation_id);
-  });
-  tx();
-
-  // notify driver (best-effort)
-  if (twilioClient && TWILIO_FROM && r?.driver_phone) {
-    try {
-      await twilioClient.messages.create({
-        from: TWILIO_FROM,
-        to: r.driver_phone,
-        body: `Cargill: Your ${r.date} ${r.slot_time} (${r.site_id===1?'EAST':'WEST'}) was cancelled${reason?`: ${reason}`:''}.`,
-      });
-    } catch (e) {
-      console.warn('Twilio cancel SMS error:', e?.message || e);
-    }
-  }
-
-  res.json({ ok: true });
-});
-
-app.post('/api/slots/mass-cancel', requireAuth, async (req, res) => {
-  const { site_id, date, reservation_ids = [], reason, notify = false } = req.body || {};
-  if (!site_id || !date || !reservation_ids.length)
-    return res.status(400).json({ error: 'missing fields' });
-
-  const canceled = [];
-  const phones = [];
-
-  const tx = db.transaction(() => {
-    for (const id of reservation_ids) {
-      const r = db
-        .prepare('SELECT * FROM slot_reservations WHERE id=? AND site_id=? AND date=?')
-        .get(id, site_id, date);
-      if (!r) continue;
-
-      db.prepare(
-        'UPDATE time_slots SET reserved_truck_id=NULL, reserved_at=NULL WHERE site_id=? AND date=? AND slot_time=? AND reserved_truck_id=?'
-      ).run(site_id, date, r.slot_time, r.id);
-      db.prepare('DELETE FROM slot_reservations WHERE id=?').run(id);
-
-      canceled.push(id);
-      if (notify && r.driver_phone) phones.push(r.driver_phone);
-    }
-  });
-  tx();
-
-  // Notifications (best-effort)
-  if (notify && twilioClient && TWILIO_FROM && phones.length) {
-    const msg = `Cargill: Appointments on ${date} (${site_id===1?'EAST':'WEST'}) were cancelled${reason?`: ${reason}`:''}.`;
-    for (const to of phones) {
-      try { await twilioClient.messages.create({ from: TWILIO_FROM, to, body: msg }); }
-      catch (e) { console.warn('Twilio mass-cancel SMS error:', e?.message || e); }
-    }
-  }
-
-  res.json({ ok: true, canceled: canceled.length });
-});
-
-// ---------- Notify-only ----------
-app.post('/api/slots/notify', requireAuth, async (req, res) => {
-  const { reservation_id, message } = req.body || {};
-  if (!reservation_id || !message)
-    return res.status(400).json({ error: 'reservation_id and message required' });
-  const r = db.prepare('SELECT driver_phone, date, slot_time, site_id FROM slot_reservations WHERE id=?').get(reservation_id);
-  if (!r || !r.driver_phone) return res.status(404).json({ error: 'reservation/phone not found' });
-
-  if (twilioClient && TWILIO_FROM) {
-    try {
-      const msg = await twilioClient.messages.create({
-        from: TWILIO_FROM,
-        to: r.driver_phone,
-        body: `Cargill (${r.site_id===1?'EAST':'WEST'} ${r.date} ${r.slot_time}): ${message}`,
-      });
-      return res.json({ ok: true, sid: msg.sid, status: msg.status });
-    } catch (e) {
-      console.warn('Twilio notify error:', e?.message || e);
-      return res.status(500).json({ error: 'twilio_error' });
-    }
-  } else {
-    console.log(`[DEV] Notify to ${r.driver_phone}: ${message}`);
-    return res.json({ ok: true, dev: true });
-  }
-});
-
-// ---------- Scale verify ----------
-app.get('/api/scale/verify', (req, res) => {
-  const { code, site = 'EAST', date = todayLocalISO() } = req.query || {};
-  if (!code || String(code).length !== 4)
-    return res.status(400).json({ error: 'code must be 4 digits' });
-  const sid = site === 'WEST' ? 2 : 1;
-  const row = db
-    .prepare(
-      `SELECT id, queue_code, license_plate, driver_name, status, created_at, site_id
-       FROM trucks
-       WHERE queue_code = ? AND site_id = ? AND checkin_date = ?
-       ORDER BY id DESC LIMIT 1`
-    )
-    .get(String(code), sid, date);
-  if (!row) return res.status(404).json({ error: 'Not found for site/date' });
-  res.json(row);
-});
-
-// ---------- Appointments list for facility ----------
+// GET /api/appointments?site=1&date=YYYY-MM-DD
+// returns rows for facility-appointments page (reserved only)
 app.get('/api/appointments', (req, res) => {
-  const site_id = Number(req.query?.site_id);
-  const date = req.query?.date || todayLocalISO();
-  if (!site_id) return res.status(400).json({ error: 'site_id required' });
-  const rows = db
-    .prepare(
-      'SELECT * FROM slot_reservations WHERE site_id=? AND date=? ORDER BY slot_time'
-    )
-    .all(site_id, date);
-  res.json(rows);
+  try {
+    const site = Number(req.query.site || 1);
+    const date = String(req.query.date || '').slice(0, 10);
+    if (!date) return res.status(400).json({ ok: false, error: 'date_required' });
+
+    const rows = db
+      .prepare(
+        `SELECT r.id, r.site_id, r.date, r.slot_time,
+                r.driver_name, r.license_plate, r.vendor_name, r.farm_or_ticket,
+                r.est_amount, r.est_unit, r.driver_phone, r.queue_code
+           FROM slot_reservations r
+          WHERE r.site_id = ? AND r.date = ?
+          ORDER BY r.slot_time`
+      )
+      .all(site, date);
+
+    res.json({
+      ok: true,
+      site,
+      date,
+      items: rows.map((r) => ({
+        id: r.id,
+        time: r.slot_time,
+        driver: r.driver_name,
+        plate: r.license_plate,
+        vendor: r.vendor_name,
+        farm_ticket: r.farm_or_ticket,
+        est_amt: r.est_amount,
+        est_unit: r.est_unit,
+        phone: r.driver_phone,
+        probe_code: r.queue_code || null,
+        status: 'reserved',
+      })),
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
 });
 
-// ---------- SPA fallback ----------
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+// Reserve a slot (driver flow or admin)
+// Body: {site_id, date, slot_time, driver_name, license_plate, vendor_name, farm_or_ticket, est_amount, est_unit, driver_phone}
+app.post('/api/slots/reserve', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const site_id = Number(b.site_id);
+    const date = String(b.date || '').slice(0, 10);
+    const slot_time = String(b.slot_time || '');
+
+    if (!site_id || !date || !slot_time) {
+      return res.status(400).json({ ok: false, error: 'missing_required_fields' });
+    }
+
+    // ensure slot exists
+    const slot = db
+      .prepare(
+        `SELECT id FROM time_slots WHERE site_id=? AND date=? AND slot_time=? LIMIT 1`
+      )
+      .get(site_id, date, slot_time);
+    if (!slot) return res.status(404).json({ ok: false, error: 'slot_not_found' });
+
+    // ensure not already reserved
+    const taken = db
+      .prepare(
+        `SELECT id FROM slot_reservations WHERE site_id=? AND date=? AND slot_time=? LIMIT 1`
+      )
+      .get(site_id, date, slot_time);
+    if (taken) return res.status(409).json({ ok: false, error: 'slot_already_reserved' });
+
+    const phone = normalizePhone(b.driver_phone);
+    const probeCode = random4();
+
+    const manage_token = nanoid(20);
+    const info = db
+      .prepare(
+        `INSERT INTO slot_reservations
+          (site_id,date,slot_time,truck_id,license_plate,driver_name,driver_phone,
+           vendor_name,farm_or_ticket,est_amount,est_unit,manage_token,queue_code)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      )
+      .run(
+        site_id,
+        date,
+        slot_time,
+        b.truck_id || null,
+        b.license_plate || null,
+        b.driver_name || null,
+        phone || null,
+        b.vendor_name || null,
+        b.farm_or_ticket || null,
+        b.est_amount || null,
+        b.est_unit || null,
+        manage_token,
+        probeCode
+      );
+
+    const siteLabel = siteName(site_id);
+    if (phone) {
+      const text = `Cargill: Confirmed ${date} at ${slot_time} (${siteLabel}). ` +
+        `Probe Code ${probeCode}. Reply STOP to opt out.`;
+      await sendSMS(phone, text);
+    }
+
+    return res.json({
+      ok: true,
+      reservation: {
+        id: info.lastInsertRowid,
+        site_id,
+        date,
+        slot_time,
+        probe_code: probeCode,
+        manage_token,
+      },
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
 });
 
-// ---------- Start server ----------
-const PORT = Number(getEnv('PORT', 10000));
+// Reassign reservation to a different time
+// Body: { reservation_id, to_slot_time }
+app.post('/api/slots/reassign', async (req, res) => {
+  try {
+    const id = Number(req.body?.reservation_id);
+    const toTime = String(req.body?.to_slot_time || '');
+    if (!id || !toTime) return res.status(400).json({ ok: false, error: 'bad_request' });
+
+    const r = db
+      .prepare(`SELECT * FROM slot_reservations WHERE id=? LIMIT 1`)
+      .get(id);
+    if (!r) return res.status(404).json({ ok: false, error: 'reservation_not_found' });
+
+    // check destination slot
+    const slot = db
+      .prepare(
+        `SELECT id FROM time_slots WHERE site_id=? AND date=? AND slot_time=? LIMIT 1`
+      )
+      .get(r.site_id, r.date, toTime);
+    if (!slot) return res.status(404).json({ ok: false, error: 'target_slot_not_found' });
+
+    // ensure destination not taken
+    const taken = db
+      .prepare(
+        `SELECT id FROM slot_reservations WHERE site_id=? AND date=? AND slot_time=? LIMIT 1`
+      )
+      .get(r.site_id, r.date, toTime);
+    if (taken) return res.status(409).json({ ok: false, error: 'target_slot_unavailable' });
+
+    db.prepare(`UPDATE slot_reservations SET slot_time=? WHERE id=?`).run(toTime, id);
+
+    if (r.driver_phone) {
+      const text = `Cargill: Your time was changed to ${r.date} ${toTime} (${siteName(
+        r.site_id
+      )}). Probe Code ${r.queue_code}. Reply STOP to opt out.`;
+      await sendSMS(r.driver_phone, text);
+    }
+
+    return res.json({
+      ok: true,
+      reservation: {
+        id,
+        site_id: r.site_id,
+        date: r.date,
+        slot_time: toTime,
+        probe_code: r.queue_code,
+      },
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// Cancel reservation
+// Body: { reservation_id }
+app.post('/api/slots/cancel', async (req, res) => {
+  try {
+    const id = Number(req.body?.reservation_id);
+    if (!id) return res.status(400).json({ ok: false, error: 'bad_request' });
+
+    const r = db
+      .prepare(`SELECT * FROM slot_reservations WHERE id=? LIMIT 1`)
+      .get(id);
+    if (!r) return res.status(404).json({ ok: false, error: 'reservation_not_found' });
+
+    db.prepare(`DELETE FROM slot_reservations WHERE id=?`).run(id);
+
+    if (r.driver_phone) {
+      const text = `Cargill: Your ${r.date} ${r.slot_time} (${siteName(
+        r.site_id
+      )}) appointment was canceled. Probe Code ${r.queue_code}.`;
+      await sendSMS(r.driver_phone, text);
+    }
+
+    return res.json({
+      ok: true,
+      reservation: {
+        id,
+        site_id: r.site_id,
+        date: r.date,
+        slot_time: r.slot_time,
+        probe_code: r.queue_code,
+        status: 'canceled',
+      },
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// Optional mass cancel: { reservation_ids: [1,2,3] }
+app.post('/api/slots/cancel-multiple', async (req, res) => {
+  try {
+    if (!Array.isArray(req.body?.reservation_ids) || !req.body.reservation_ids.length) {
+      return res.status(400).json({ ok: false, error: 'no_ids' });
+    }
+    const ids = req.body.reservation_ids.map(Number).filter(Boolean);
+    const results = [];
+    for (const id of ids) {
+      const r = db.prepare(`SELECT * FROM slot_reservations WHERE id=?`).get(id);
+      if (!r) {
+        results.push({ id, ok: false, error: 'not_found' });
+        continue;
+      }
+      db.prepare(`DELETE FROM slot_reservations WHERE id=?`).run(id);
+      if (r.driver_phone) {
+        await sendSMS(
+          r.driver_phone,
+          `Cargill: Your ${r.date} ${r.slot_time} (${siteName(
+            r.site_id
+          )}) appointment was canceled.`
+        );
+      }
+      results.push({ id, ok: true, probe_code: r.queue_code });
+    }
+    res.json({ ok: true, results });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// ---------- Notify-only (admin) ----------
+// Body: { phone, message }
+// Header: X-Admin-Key: <ADMIN_KEY>
+app.post('/api/notify', async (req, res) => {
+  try {
+    if (!ADMIN_KEY || req.header('X-Admin-Key') !== ADMIN_KEY) {
+      return res.status(401).json({ ok: false, error: 'unauthorized' });
+    }
+    const phone = normalizePhone(req.body?.phone);
+    let message = String(req.body?.message || '').trim();
+    if (!phone || !message) return res.status(400).json({ ok: false, error: 'bad_request' });
+
+    // Always append STOP guidance once (if not already present)
+    if (!/stop to opt out/i.test(message)) {
+      message += ' Reply STOP to opt out.';
+    }
+    const sms = await sendSMS(phone, message);
+    res.json({ ok: true, sms });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// ---------- Health ----------
+app.get('/api/health', (req, res) => res.json({ ok: true }));
+
+// ---------- Static (public) ----------
+app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
+
 app.listen(PORT, () => {
   console.log('Server running on http://localhost:' + PORT);
-  console.log('CORS origin:', ORIGIN);
+  console.log('CORS origin:', CORS_ORIGIN.length ? CORS_ORIGIN.join(', ') : '(permissive)');
 });
