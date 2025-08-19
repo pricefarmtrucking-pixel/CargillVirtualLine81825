@@ -1,431 +1,286 @@
 <!doctype html>
-<html lang="en">
+<html>
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Facility — Appointments</title>
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
-    .container { max-width: 1100px; margin: 4vh auto; padding: 0 1rem; }
-    .header { display:flex; align-items:center; justify-content:space-between; gap:.75rem; }
-    .title { font-weight: 800; }
-    .row { display:flex; align-items:center; gap:.5rem; flex-wrap: wrap; }
-    .chip { padding:.25rem .6rem; border:1px solid #ddd; border-radius:999px; background:#f7f7f7; font-size:.9rem; }
-    .btn { padding:.45rem .75rem; border:1px solid #ddd; border-radius:10px; background:#fff; cursor:pointer; }
-    .btn.primary { background:#1e90ff; color:#fff; border-color:#1e90ff; }
-    .btn.small { font-size:.85rem; padding:.3rem .55rem; }
-    .btn.warn { background:#fff3f3; border-color:#ffdede; color:#aa1a1a; }
-    .input, select { padding:.5rem .6rem; border:1px solid #ccc; border-radius:10px; }
-    .table { width:100%; border-collapse: collapse; margin-top:.75rem; }
-    .table th, .table td { padding:.6rem .5rem; border-bottom:1px solid #eee; vertical-align: top; }
-    .pill { padding:.15rem .5rem; border-radius:999px; font-size:.8rem; border:1px solid #e5e5e5; background:#fafafa; }
-    .pill.res { color:#0a7a28; background:#eaf8ee; border-color:#cfe9d6; }
-    .pill.open { color:#555; }
+    .container { max-width: 1200px; margin: 5vh auto; padding: 0 1rem; }
+    .card { border:1px solid #ddd; border-radius:12px; padding:1rem; background:#fff; box-shadow: 0 2px 12px rgba(0,0,0,.03); }
+    .row { display:flex; gap:.6rem; align-items:center; flex-wrap:wrap; }
+    .button { padding:.48rem .8rem; border-radius:10px; border:1px solid #ddd; background:#f7f7f7; cursor:pointer; }
+    .button.primary { background:#1e90ff; color:#fff; border-color:#1e90ff; }
+    .input, .select { padding:.48rem .6rem; border:1px solid #ccc; border-radius:10px; }
+    table { width:100%; border-collapse: collapse; margin-top:.75rem; }
+    th, td { padding:.52rem .6rem; border-bottom:1px solid #eee; text-align:left; vertical-align:top; }
+    th.sticky { position: sticky; top:0; background:#fff; z-index:1; }
+    .mono { font-variant-numeric: tabular-nums; letter-spacing:.02em; }
+    .tag { font-size:.83rem; padding:.15rem .5rem; border-radius:999px; border:1px solid #ddd; background:#fafafa; white-space:nowrap; }
+    .tag.ok { background:#e9f7ef; border-color:#bfe5cf; color:#0a7a28; }
+    .muted { color:#666; }
     .right { margin-left:auto; }
-    .toolbar { display:flex; gap:.5rem; align-items:center; }
-    .muted { color:#666; font-size:.9rem; }
-    .link { color:#1e90ff; text-decoration:none; }
-    /* Modal */
-    .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; padding:1rem; }
-    .modal { width:min(520px, 96vw); background:#fff; border-radius:12px; border:1px solid #ddd; box-shadow:0 10px 30px rgba(0,0,0,.2); }
-    .modal header, .modal footer { padding: .9rem 1rem; border-bottom:1px solid #eee; }
-    .modal footer { border-top:1px solid #eee; border-bottom:none; display:flex; gap:.5rem; justify-content:flex-end; }
-    .modal .body { padding: 1rem; display:grid; grid-template-columns: 1fr 1fr; gap:.6rem; }
-    .modal .body .full { grid-column: 1/-1; }
-    .help { font-size:.85rem; color:#777; }
-    .no-data { padding:1rem; border:1px dashed #ddd; border-radius:10px; text-align:center; color:#666; }
-    @media (max-width: 900px) { .modal .body { grid-template-columns: 1fr; } }
+    .err { color:#b00020; }
+    .ok { color:#0a7a28; }
+    .toolbar { gap:.8rem; }
+    .chip { padding:.15rem .5rem; border:1px solid #e5e5e5; border-radius:999px; background:#fafafa; font-size:.85rem; }
   </style>
 </head>
 <body>
 <div class="container">
-  <div class="header">
-    <div class="title">Cargill Soybean — Facility</div>
-    <div class="toolbar right">
-      <a class="btn" href="index.html">Driver Site</a>
-      <button class="btn" id="btnRefresh">Refresh</button>
+  <div class="card">
+    <div class="row toolbar" style="margin-bottom:.4rem;">
+      <strong>Facility — Appointments</strong>
+      <span id="env" class="chip"></span>
+      <span class="right"></span>
+      <a class="button" href="index.html">Home</a>
+      <button id="btnRefresh" class="button">Refresh</button>
+      <label class="row" style="gap:.35rem;">
+        <input id="auto" type="checkbox"/>
+        <span class="muted">Auto‑refresh (30s)</span>
+      </label>
     </div>
-  </div>
 
-  <div class="row" style="margin-top:.6rem;">
-    <div class="chip">Appointments — <span id="hdrDate"></span> (<span id="hdrSiteTxt"></span>)</div>
-    <div class="row right">
-      <label class="muted">Site</label>
-      <select id="site">
-        <option value="1">East</option>
-        <option value="2">West</option>
-      </select>
-      <label class="muted">Date</label>
-      <input id="date" type="date" class="input"/>
-      <label class="muted">Filter</label>
-      <select id="filter">
-        <option value="all">All</option>
-        <option value="open">Open</option>
-        <option value="reserved">Reserved</option>
-      </select>
-      <input id="q" class="input" placeholder="Search name, plate, code..."/>
-    </div>
-  </div>
-
-  <table class="table" id="apptTable" aria-label="appointments">
-    <thead>
-      <tr>
-        <th style="min-width:64px;">Time</th>
-        <th>Driver</th>
-        <th>Plate</th>
-        <th>Vendor</th>
-        <th>Farm/Ticket</th>
-        <th>Est. Amt</th>
-        <th>Unit</th>
-        <th>Phone</th>
-        <th>Probe Code</th>
-        <th>Status</th>
-        <th style="min-width:160px;">Actions</th>
-      </tr>
-    </thead>
-    <tbody id="tbody">
-      <tr><td colspan="11"><div class="no-data">Loading…</div></td></tr>
-    </tbody>
-  </table>
-
-  <div class="muted" style="margin-top:.6rem;">
-    * “Probe Code” is the 4‑digit confirmation used by the probe desk to match the driver to the load.
-  </div>
-</div>
-
-<!-- Assign / Reassign Modal -->
-<div class="modal-backdrop" id="assignBack">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="assignTitle">
-    <header><strong id="assignTitle">Assign Reservation</strong></header>
-    <div class="body">
-      <div class="full help" id="assignWhen"></div>
-      <div>
-        <label>Driver name</label>
-        <input id="f_driver" class="input" placeholder="e.g., Brian"/>
-      </div>
-      <div>
-        <label>License plate</label>
-        <input id="f_plate" class="input" placeholder="e.g., LR6180"/>
-      </div>
-      <div>
-        <label>Vendor</label>
-        <input id="f_vendor" class="input" placeholder="e.g., River Valley"/>
-      </div>
-      <div>
-        <label>Farm/Ticket</label>
-        <input id="f_farm" class="input" placeholder="Optional"/>
-      </div>
-      <div>
-        <label>Est. amount</label>
-        <input id="f_amt" class="input" inputmode="decimal" placeholder="e.g., 1000"/>
-      </div>
-      <div>
-        <label>Unit</label>
-        <select id="f_unit" class="input">
-          <option value="Bushels">Bushels</option>
-          <option value="Tons">Tons</option>
-          <option value="Loads">Loads</option>
+    <div class="row" style="margin-bottom:.3rem;">
+      <label>Site
+        <select id="site" class="select">
+          <option value="1">East</option>
+          <option value="2">West</option>
         </select>
-      </div>
-      <div class="full">
-        <label>Driver phone</label>
-        <input id="f_phone" class="input" placeholder="+1XXXXXXXXXX"/>
-      </div>
-      <div class="full">
-        <label>4‑digit probe code</label>
-        <div class="row">
-          <input id="f_code" class="input" placeholder="1234" maxlength="4" style="max-width:120px;" inputmode="numeric"/>
-          <button class="btn small" id="btnGenCode" type="button" title="Generate random 4‑digit code">Generate</button>
-        </div>
-        <div class="help">This will be texted to the driver and saved to the reservation.</div>
-      </div>
-    </div>
-    <footer>
-      <button class="btn" id="btnAssignCancel" type="button">Cancel</button>
-      <button class="btn primary" id="btnAssignSave" type="button">Save</button>
-    </footer>
-  </div>
-</div>
+      </label>
+      <label>Date
+        <input id="date" class="input" type="date"/>
+      </label>
 
-<!-- Reassign Modal -->
-<div class="modal-backdrop" id="moveBack">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="moveTitle">
-    <header><strong id="moveTitle">Reassign Reservation</strong></header>
-    <div class="body">
-      <div class="full help" id="moveWhen">Move reservation</div>
-      <div>
-        <label>New time (HH:MM)</label>
-        <input id="move_time" class="input" placeholder="e.g., 08:24"/>
-      </div>
-      <div class="full help">Enter a valid slot time for the same date/site.</div>
+      <span class="right"></span>
+
+      <label>Filter
+        <select id="filter" class="select">
+          <option value="all">All</option>
+          <option value="open">Open</option>
+          <option value="reserved">Reserved</option>
+        </select>
+      </label>
+      <label>Search
+        <input id="search" class="input" placeholder="Name, plate, vendor, code, phone…"/>
+      </label>
     </div>
-    <footer>
-      <button class="btn" id="btnMoveCancel" type="button">Cancel</button>
-      <button class="btn primary" id="btnMoveSave" type="button">Move</button>
-    </footer>
+
+    <div id="status" class="muted" style="min-height:1.2em; margin:.2rem 0 .4rem;"></div>
+
+    <div style="overflow:auto; max-height:68vh; border:1px solid #eee; border-radius:10px;">
+      <table id="grid">
+        <thead>
+          <tr>
+            <th class="sticky">Time</th>
+            <th class="sticky">Driver</th>
+            <th class="sticky">Plate</th>
+            <th class="sticky">Vendor</th>
+            <th class="sticky">Farm/Ticket</th>
+            <th class="sticky">Est. Amt</th>
+            <th class="sticky">Unit</th>
+            <th class="sticky">Phone</th>
+            <th class="sticky">Probe Code</th>
+            <th class="sticky">Status</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="10" class="muted">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 </div>
 
 <script>
 (function(){
-  // --- helpers
-  const $ = sel => document.querySelector(sel);
-  const $$ = sel => Array.from(document.querySelectorAll(sel));
-  const asEl = (html) => { const t=document.createElement('template'); t.innerHTML=html.trim(); return t.content.firstElementChild; };
-  const fmtDate = (d) => d.toISOString().slice(0,10);
-  const todayLocalISO = () => {
-    const d=new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10);
-  };
-  const siteName = (id) => id==2?'West':'East';
-  const clamp4 = (s)=> (s||'').replace(/\D/g,'').slice(0,4);
-  const normPhone = (v) => {
-    const d=(v||'').replace(/\D/g,'');
-    if (/^\d{10}$/.test(d)) return '+1'+d;
-    const m=d.match(/^1?(\d{10})$/); return m?'+1'+m[1]:null;
-  };
-  const gen4 = ()=> String(Math.floor(1000 + Math.random()*9000));
+  // ===== Config / helpers =====
+  const API = ''; // same-origin
+  const $ = id => document.getElementById(id);
+  const todayISO = ()=>{const d=new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10);};
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[m]));
+  const siteName = id => (Number(id)===2?'West':'East');
 
-  // --- state
-  const state = {
-    site_id: 1,
-    date: todayLocalISO(),
-    rows: [],
-    moveReservationId: null,
-    assignTargetTime: null,
-  };
+  let autoTimer = null;
+  const state = { site:1, date: todayISO(), rows:[], slots:[], appointments:[], lastFetchMsg:'' };
 
-  // --- DOM refs
-  const elSite = $('#site');
-  const elDate = $('#date');
-  const elFilter = $('#filter');
-  const elQ = $('#q');
-  const elHdrDate = $('#hdrDate');
-  const elHdrSite = $('#hdrSiteTxt');
-  const elTbody = $('#tbody');
-  const elBtnRefresh = $('#btnRefresh');
+  // Preset controls
+  $('date').value = state.date;
+  $('site').value = String(state.site);
 
-  // assign modal refs
-  const assignBack = $('#assignBack');
-  const assignWhen = $('#assignWhen');
-  const f_driver=$('#f_driver'), f_plate=$('#f_plate'), f_vendor=$('#f_vendor'), f_farm=$('#f_farm'),
-        f_amt=$('#f_amt'), f_unit=$('#f_unit'), f_phone=$('#f_phone'), f_code=$('#f_code');
-  const btnGenCode = $('#btnGenCode'), btnAssignCancel = $('#btnAssignCancel'), btnAssignSave = $('#btnAssignSave');
+  // Env chip (helps debug CORS/deploys)
+  const origin = location.origin;
+  $('env').textContent = origin;
 
-  // reassign modal refs
-  const moveBack = $('#moveBack');
-  const moveWhen = $('#moveWhen');
-  const move_time = $('#move_time');
-  const btnMoveCancel = $('#btnMoveCancel'), btnMoveSave = $('#btnMoveSave');
+  // Bind UI
+  $('btnRefresh').addEventListener('click', ()=> refresh(true));
+  $('auto').addEventListener('change', ()=> toggleAuto($('auto').checked));
+  $('site').addEventListener('change', ()=>{ state.site = Number($('site').value); refresh(true); });
+  $('date').addEventListener('change', ()=>{ state.date = $('date').value || todayISO(); refresh(true); });
+  $('filter').addEventListener('change', render);
+  $('search').addEventListener('input', render);
 
-  // --- init
-  elDate.value = state.date;
-  elSite.value = String(state.site_id);
-  elHdrDate.textContent = state.date;
-  elHdrSite.textContent = siteName(state.site_id);
+  // First load
+  refresh(true);
 
-  // --- events
-  elSite.addEventListener('change', () => { state.site_id = Number(elSite.value); elHdrSite.textContent = siteName(state.site_id); fetchAndRender(); });
-  elDate.addEventListener('change', () => { state.date = elDate.value || todayLocalISO(); elHdrDate.textContent = state.date; fetchAndRender(); });
-  elFilter.addEventListener('change', render);
-  elQ.addEventListener('input', render);
-  elBtnRefresh.addEventListener('click', fetchAndRender);
+  function toggleAuto(on){
+    clearInterval(autoTimer);
+    if (on) autoTimer = setInterval(()=> refresh(false), 30000);
+  }
 
-  // --- network
-  async function fetchAndRender(){
-    elTbody.innerHTML = `<tr><td colspan="11"><div class="no-data">Loading…</div></td></tr>`;
+  async function refresh(showStatus){
+    setStatus(showStatus ? 'Loading…' : '');
+    $('tbody').innerHTML = `<tr><td colspan="10" class="muted">Loading…</td></tr>`;
+    const qs = `site=${encodeURIComponent(state.site)}&date=${encodeURIComponent(state.date)}`;
+
     try{
-      const r = await fetch(`/api/appointments?site_id=${encodeURIComponent(state.site_id)}&date=${encodeURIComponent(state.date)}`, { credentials:'include' });
-      const data = await r.json();
-      // Expect array
-      state.rows = Array.isArray(data)? data : [];
+      const [slotsR, apptsR] = await Promise.all([
+        fetch(`${API}/api/slots?${qs}`, { credentials:'include' }),
+        fetch(`${API}/api/appointments?${qs}`, { credentials:'include' })
+      ]);
+
+      // Handle auth errors
+      if (slotsR.status === 401 || apptsR.status === 401) {
+        setStatus('Not signed in. Redirecting to Probe login…', 'err');
+        setTimeout(()=> location.href = 'probe-login.html', 800);
+        return;
+      }
+
+      // Handle CORS/network issues
+      if (!slotsR.ok) {
+        const t = await safeText(slotsR);
+        throw new Error(`/api/slots ${slotsR.status} ${slotsR.statusText} ${t||''}`);
+      }
+      if (!apptsR.ok) {
+        const t = await safeText(apptsR);
+        throw new Error(`/api/appointments ${apptsR.status} ${apptsR.statusText} ${t||''}`);
+      }
+
+      const slotsJ = await safeJson(slotsR);
+      const apptsJ = await safeJson(apptsR);
+
+      // Expect { ok:true, slots:[...] } and { ok:true, appointments:[...] }
+      const slots = (slotsJ && slotsJ.slots) ? slotsJ.slots : [];
+      const appointments = (apptsJ && (apptsJ.appointments || apptsJ.items)) ? (apptsJ.appointments || apptsJ.items) : [];
+
+      state.slots = slots;
+      state.appointments = appointments;
+      state.rows = combine(slots, appointments);
+
+      setStatus(`Showing ${state.rows.length} rows for ${siteName(state.site)} on ${state.date}.`);
+      render();
     }catch(err){
-      state.rows = [];
       console.error(err);
-      elTbody.innerHTML = `<tr><td colspan="11"><div class="no-data">Error loading appointments.</div></td></tr>`;
-      return;
+      setStatus(`Load failed: ${err.message||err}`, 'err');
+      $('tbody').innerHTML = `<tr><td colspan="10" class="err">Error loading data. Check Console (DevTools) for details.</td></tr>`;
     }
-    render();
   }
 
-  // --- render
+  function setStatus(msg, kind){
+    const el = $('status');
+    el.textContent = msg || '';
+    el.classList.remove('err','ok');
+    if (kind) el.classList.add(kind);
+  }
+
+  async function safeJson(res){
+    try { return await res.json(); } catch { return null; }
+  }
+  async function safeText(res){
+    try { return await res.text(); } catch { return ''; }
+  }
+
+  // Merge time base (slots) with reservation details (appointments)
+  function combine(slots, appts){
+    const map = new Map();
+    (appts||[]).forEach(r=>{
+      // normalize keys from either structure
+      const time = r.time || r.slot_time;
+      map.set(time, {
+        time,
+        status: (r.status || '').toLowerCase()==='reserved' ? 'Reserved' : 'Reserved',
+        driver: r.driver || r.driver_name || '',
+        plate: r.plate || r.license_plate || '',
+        vendor: r.vendor || r.vendor_name || '',
+        farm_ticket: r.farm_ticket || r.farm_or_ticket || '',
+        est_amt: r.est_amount ?? r.est_amt ?? '',
+        est_unit: r.est_unit || '',
+        phone: r.phone || r.driver_phone || '',
+        probe_code: r.probe_code || r.queue_code || ''
+      });
+    });
+
+    const rows = [];
+    (slots||[]).forEach(s=>{
+      const time = s.slot_time || s.time;
+      const r = map.get(time);
+      if (r) {
+        rows.push(r);
+      } else {
+        rows.push({
+          time,
+          status: (s.is_reserved? 'Reserved' : 'Open'),
+          driver:'', plate:'', vendor:'', farm_ticket:'',
+          est_amt:'', est_unit:'', phone:'', probe_code:''
+        });
+      }
+    });
+
+    // In the unlikely case there were reservations without a slot row:
+    (appts||[]).forEach(r=>{
+      const time = r.time || r.slot_time;
+      if (!rows.find(x=>x.time===time)) {
+        rows.push({
+          time,
+          status:'Reserved',
+          driver: r.driver || r.driver_name || '',
+          plate: r.plate || r.license_plate || '',
+          vendor: r.vendor || r.vendor_name || '',
+          farm_ticket: r.farm_ticket || r.farm_or_ticket || '',
+          est_amt: r.est_amount ?? r.est_amt ?? '',
+          est_unit: r.est_unit || '',
+          phone: r.phone || r.driver_phone || '',
+          probe_code: r.probe_code || r.queue_code || ''
+        });
+      }
+    });
+
+    return rows.sort((a,b)=> String(a.time).localeCompare(String(b.time)));
+  }
+
   function render(){
-    const q = (elQ.value||'').trim().toLowerCase();
-    const flt = elFilter.value;
-    let rows = state.rows;
+    const f = $('filter').value;
+    const q = $('search').value.trim().toLowerCase();
 
-    if (flt === 'open') rows = rows.filter(r => (r.status||'Open').toLowerCase()==='open');
-    if (flt === 'reserved') rows = rows.filter(r => (r.status||'Open').toLowerCase()!=='open');
-
-    if (q) {
-      rows = rows.filter(r => {
-        const bag = [
-          r.slot_time, r.driver_name, r.license_plate, r.vendor_name,
-          r.farm_or_ticket, r.driver_phone, r.queue_code
-        ].map(x => (x||'').toString().toLowerCase()).join(' ');
-        return bag.includes(q);
-      });
-    }
-
-    if (!rows.length){
-      elTbody.innerHTML = `<tr><td colspan="11"><div class="no-data">No appointments found.</div></td></tr>`;
-      return;
-    }
-
-    elTbody.innerHTML = '';
-    rows.forEach(r => {
-      const isOpen = (r.status||'Open').toLowerCase()==='open';
-      const tr = asEl(`
-        <tr>
-          <td><strong>${r.slot_time||''}</strong></td>
-          <td>${esc(r.driver_name) || '—'}</td>
-          <td>${esc(r.license_plate) || '—'}</td>
-          <td>${esc(r.vendor_name) || '—'}</td>
-          <td>${esc(r.farm_or_ticket) || '—'}</td>
-          <td>${r.est_amount != null ? esc(r.est_amount) : '—'}</td>
-          <td>${esc(r.est_unit) || '—'}</td>
-          <td>${esc(r.driver_phone) || '—'}</td>
-          <td>${esc(r.queue_code) || '—'}</td>
-          <td><span class="pill ${isOpen?'open':'res'}">${isOpen?'Open':'Reserved'}</span></td>
-          <td class="row" style="gap:.35rem;">
-            ${isOpen
-              ? `<button class="btn small primary" data-act="assign" data-time="${r.slot_time}">Assign</button>`
-              : `<button class="btn small" data-act="reassign" data-id="${r.id}" data-time="${r.slot_time}">Reassign</button>
-                 <button class="btn small warn" data-act="cancel" data-id="${r.id}">Cancel</button>`
-            }
-          </td>
-        </tr>
-      `);
-      elTbody.appendChild(tr);
+    const rows = state.rows.filter(r=>{
+      if (f==='open' && r.status==='Reserved') return false;
+      if (f==='reserved' && r.status!=='Reserved') return false;
+      if (!q) return true;
+      const bag = [r.time,r.driver,r.plate,r.vendor,r.farm_ticket,r.phone,r.probe_code].join(' ').toLowerCase();
+      return bag.includes(q);
     });
 
-    // wire row buttons
-    elTbody.querySelectorAll('button').forEach(btn=>{
-      const act = btn.getAttribute('data-act');
-      if (act === 'assign') btn.addEventListener('click', onAssignClick);
-      if (act === 'reassign') btn.addEventListener('click', onReassignClick);
-      if (act === 'cancel') btn.addEventListener('click', onCancelClick);
-    });
+    $('tbody').innerHTML = rows.length ? rows.map(tr).join('') :
+      `<tr><td colspan="10" class="muted">No rows match.</td></tr>`;
   }
 
-  function esc(v){ return (v==null?'':String(v)).replace(/[&<>"]/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[s])); }
-
-  // --- assign flow
-  function onAssignClick(e){
-    const slot_time = e.currentTarget.getAttribute('data-time');
-    state.assignTargetTime = slot_time;
-    openAssign(slot_time);
+  function tr(r){
+    const badge = r.status==='Reserved'
+      ? `<span class="tag ok">Reserved</span>`
+      : `<span class="tag">Open</span>`;
+    return `<tr>
+      <td class="mono">${esc(r.time||'')}</td>
+      <td>${esc(r.driver||'—')}</td>
+      <td class="mono">${esc(r.plate||'—')}</td>
+      <td>${esc(r.vendor||'—')}</td>
+      <td>${esc(r.farm_ticket||'—')}</td>
+      <td>${esc(r.est_amt||'—')}</td>
+      <td>${esc(r.est_unit||'—')}</td>
+      <td>${esc(r.phone||'—')}</td>
+      <td class="mono">${esc(r.probe_code||'—')}</td>
+      <td>${badge}</td>
+    </tr>`;
   }
-
-  function openAssign(slot_time){
-    assignWhen.textContent = `Assign ${siteName(state.site_id)} on ${state.date} at ${slot_time}`;
-    // clear fields
-    f_driver.value=''; f_plate.value=''; f_vendor.value=''; f_farm.value='';
-    f_amt.value=''; f_unit.value='Bushels'; f_phone.value=''; f_code.value=gen4();
-    assignBack.style.display='flex';
-    f_driver.focus();
-  }
-  function closeAssign(){ assignBack.style.display='none'; }
-
-  btnGenCode.addEventListener('click', ()=> { f_code.value = gen4(); f_code.focus(); });
-
-  btnAssignCancel.addEventListener('click', closeAssign);
-  btnAssignSave.addEventListener('click', async ()=>{
-    // validate
-    const payload = {
-      site_id: state.site_id,
-      date: state.date,
-      slot_time: state.assignTargetTime,
-      driver_name: f_driver.value.trim(),
-      license_plate: f_plate.value.trim(),
-      vendor_name: f_vendor.value.trim(),
-      farm_or_ticket: f_farm.value.trim(),
-      est_amount: f_amt.value.trim()? Number(f_amt.value.trim()) : null,
-      est_unit: f_unit.value,
-      driver_phone: normPhone(f_phone.value.trim()),
-      queue_code: clamp4(f_code.value)
-    };
-    if (!payload.driver_name) return alert('Driver name is required');
-    if (!payload.license_plate) return alert('License plate is required');
-    if (!payload.driver_phone) return alert('Enter a valid US mobile number');
-    if (!payload.queue_code || payload.queue_code.length!==4) return alert('Enter a 4-digit probe code');
-
-    try{
-      const r = await fetch('/api/slots/reserve', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        credentials:'include',
-        body: JSON.stringify(payload)
-      });
-      const j = await r.json().catch(()=>({}));
-      if (!r.ok || j.error) {
-        alert('Assign failed: ' + (j.error || r.statusText));
-        return;
-      }
-      closeAssign();
-      await fetchAndRender();
-    }catch(err){
-      alert('Network error: ' + err.message);
-    }
-  });
-
-  // --- reassign flow
-  function onReassignClick(e){
-    const id = Number(e.currentTarget.getAttribute('data-id'));
-    const t  = e.currentTarget.getAttribute('data-time');
-    state.moveReservationId = id;
-    moveWhen.textContent = `Move reservation #${id} on ${state.date} (currently ${t})`;
-    move_time.value = '';
-    moveBack.style.display='flex';
-    move_time.focus();
-  }
-  function closeMove(){ moveBack.style.display='none'; }
-  btnMoveCancel.addEventListener('click', closeMove);
-  btnMoveSave.addEventListener('click', async ()=>{
-    const to_slot_time = move_time.value.trim();
-    if (!/^\d{2}:\d{2}$/.test(to_slot_time)) return alert('Enter a valid time in HH:MM (e.g., 08:24)');
-    try{
-      const r = await fetch('/api/slots/reassign', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        credentials:'include',
-        body: JSON.stringify({ reservation_id: state.moveReservationId, to_slot_time })
-      });
-      const j = await r.json().catch(()=>({}));
-      if (!r.ok || j.error) {
-        alert('Reassign failed: ' + (j.error || r.statusText));
-        return;
-      }
-      closeMove();
-      await fetchAndRender();
-    }catch(err){
-      alert('Network error: ' + err.message);
-    }
-  });
-
-  // --- cancel flow
-  async function onCancelClick(e){
-    const id = Number(e.currentTarget.getAttribute('data-id'));
-    if (!confirm(`Cancel reservation #${id}?`)) return;
-    try{
-      const r = await fetch('/api/slots/cancel', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        credentials:'include',
-        body: JSON.stringify({ reservation_id: id })
-      });
-      const j = await r.json().catch(()=>({}));
-      if (!r.ok || j.error) {
-        alert('Cancel failed: ' + (j.error || r.statusText));
-        return;
-      }
-      await fetchAndRender();
-    }catch(err){
-      alert('Network error: ' + err.message);
-    }
-  }
-
-  // initial load
-  fetchAndRender();
 })();
 </script>
 </body>
