@@ -552,6 +552,113 @@ app.post('/api/slots/reassign', (req, res) => {
 
   res.json({ ok:true, reservation_id, to_slot_time, queue_code: r.queue_code });
 });
+// ------------------------- Mass Cancel / Mass Notify -------------------------
+// POST /api/slots/mass-cancel
+// Body:
+// {
+//   "site_id": 1,
+//   "date": "2025-08-23",
+//   "reservation_ids": [12, 15],        // optional
+//   "slot_times": ["07:00","07:14"],    // optional (HH:MM)
+//   "notify": true,                      // optional (default: false)
+//   "reason": "Weather delay"            // optional
+// }
+app.post('/api/slots/mass-cancel', async (req, res) => {
+  try {
+    const { site_id, date, reservation_ids = [], slot_times = [], notify = false, reason = '' } = req.body || {};
+    if (!site_id || !date) return res.status(400).json({ error: 'site_id and date required' });
+
+    // Resolve any slot_times to reservation ids (only those actually reserved)
+    let ids = Array.isArray(reservation_ids) ? [...reservation_ids] : [];
+    if (Array.isArray(slot_times) && slot_times.length) {
+      const rows = db.prepare(`
+        SELECT r.id
+        FROM slot_reservations r
+        WHERE r.site_id=? AND r.date=? AND r.slot_time IN (${slot_times.map(()=>'?').join(',')})
+      `).all(site_id, date, ...slot_times);
+      ids.push(...rows.map(r => r.id));
+    }
+
+    // De‑dup and filter non-numeric
+    ids = [...new Set(ids)].filter(x => Number.isInteger(x));
+
+    if (ids.length === 0) {
+      return res.json({ ok: true, canceled: 0, notified: 0, details: [] });
+    }
+
+    const getById   = db.prepare(`SELECT * FROM slot_reservations WHERE id=?`);
+    const freeSlot  = db.prepare(`
+      UPDATE time_slots
+         SET reserved_truck_id=NULL, reserved_at=NULL
+       WHERE site_id=? AND date=? AND slot_time=? AND reserved_truck_id=?`);
+    const delRes    = db.prepare(`DELETE FROM slot_reservations WHERE id=?`);
+
+    const affected = [];
+    const phones   = [];
+
+    const tx = db.transaction(() => {
+      for (const id of ids) {
+        const r = getById.get(id);
+        if (!r) continue; // already gone / bad id
+
+        // free the slot
+        freeSlot.run(r.site_id, r.date, r.slot_time, r.id);
+        // delete reservation
+        delRes.run(id);
+
+        affected.push({ id, site_id: r.site_id, date: r.date, slot_time: r.slot_time, driver_phone: r.driver_phone || null });
+        if (notify && r.driver_phone) phones.push(r.driver_phone);
+      }
+    });
+    tx();
+
+    let notified = 0;
+    if (notify && phones.length) {
+      const msg = `Cargill: Appointment${phones.length>1?'s':''} on ${date} (${site_id===1?'EAST':'WEST'}) cancelled${reason?`: ${reason}`:''}.`;
+      for (const to of phones) {
+        try {
+          const resSMS = await sendSMS(to, msg);
+          if (resSMS.sent) notified++;
+        } catch (_) { /* continue */ }
+      }
+    }
+
+    return res.json({ ok: true, canceled: affected.length, notified, details: affected });
+  } catch (e) {
+    console.error('SQL error in /api/slots/mass-cancel:', e);
+    return res.status(500).json({ error: 'server error' });
+  }
+});
+
+// POST /api/slots/mass-notify
+// Body: { site_id, date, reservation_ids: [..], message: "text..." }
+app.post('/api/slots/mass-notify', async (req, res) => {
+  try {
+    const { site_id, date, reservation_ids = [], message } = req.body || {};
+    if (!site_id || !date || !Array.isArray(reservation_ids) || !reservation_ids.length || !message) {
+      return res.status(400).json({ error: 'site_id, date, reservation_ids, message required' });
+    }
+    const qMarks = reservation_ids.map(() => '?').join(',');
+    const rows = db.prepare(`
+      SELECT driver_phone
+        FROM slot_reservations
+       WHERE site_id=? AND date=? AND id IN (${qMarks})
+         AND driver_phone IS NOT NULL
+    `).all(site_id, date, ...reservation_ids);
+
+    let sent = 0;
+    for (const r of rows) {
+      try {
+        const s = await sendSMS(r.driver_phone, message);
+        if (s.sent) sent++;
+      } catch (_) {}
+    }
+    return res.json({ ok: true, targeted: rows.length, sent });
+  } catch (e) {
+    console.error('SQL error in /api/slots/mass-notify:', e);
+    return res.status(500).json({ error: 'server error' });
+  }
+});
 
 // ------------------------- Health / Debug ------------------------------------
 app.get('/healthz', (_req, res) => res.json({ ok:true }));
