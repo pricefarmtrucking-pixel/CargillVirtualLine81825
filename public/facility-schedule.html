@@ -5,121 +5,63 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Facility — Schedule Builder</title>
   <style>
-    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
-    .container { max-width: 1100px; margin: 5vh auto; padding: 0 1rem; }
-    .card { border:1px solid #ddd; border-radius:12px; padding:1rem; background:#fff; }
-    .row { display:grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap:.5rem; }
-    label { font-size:.9rem; color:#444; }
-    input, select { width:100%; padding:.55rem .7rem; border:1px solid #ccc; border-radius:8px; }
-    .button { padding:.55rem 1rem; border:1px solid #ddd; border-radius:10px; background:#f7f7f7; cursor:pointer; }
-    .button.primary { background:#1e90ff; color:#fff; border-color:#1e90ff; }
-    .grid { display:grid; grid-template-columns: repeat(4, 1fr); gap:.4rem; margin-top:.75rem; }
-    .pill { padding:.4rem .6rem; border:1px solid #ddd; border-radius:999px; text-align:center; background:#fafafa; }
-    .muted { color:#666; font-size:.9rem; }
-    .bar { display:flex; gap:.5rem; margin-top:.75rem; }
+    :root{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#222}
+    .wrap{max-width:1000px;margin:3vh auto;padding:0 1rem}
+    .row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-bottom:.75rem}
+    .input,.select,.button{padding:.5rem .6rem;border:1px solid #ccc;border-radius:10px}
+    .button{cursor:pointer}
+    .slots{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.5rem;margin-top:1rem}
+    .slot{border:1px solid #eee;border-radius:10px;padding:.5rem .6rem;text-align:center;background:#fafafa}
+    .muted{color:#666;font-size:.9rem}
   </style>
 </head>
 <body>
-<div class="container">
+<div class="wrap">
   <h2>Cargill Soybean — Facility</h2>
-
-  <div class="card" style="margin-top:1rem;">
-    <h3>Build Time Slots</h3>
-    <div class="muted">Minimum interval is <strong>5 min</strong> (East) and <strong>6 min</strong> (West).</div>
-
-    <div class="row" style="margin-top:.6rem;">
-      <label>Site
-        <select id="site">
-          <option value="1">East (1)</option>
-          <option value="2">West (2)</option>
-        </select>
-      </label>
-      <label>Date
-        <input id="date" type="date"/>
-      </label>
-      <label>Open
-        <input id="open" placeholder="07:00"/>
-      </label>
-      <label>Close
-        <input id="close" placeholder="17:00"/>
-      </label>
-      <label>Loads to Receive (per day)
-        <input id="loads" type="number" min="1" placeholder="80"/>
-      </label>
-      <label>Work-ins per Hour (optional)
-        <input id="workins" type="number" min="0" placeholder="0"/>
-      </label>
-    </div>
-
-    <div class="bar">
-      <button class="button" onclick="generate()">Generate Slots</button>
-      <button class="button primary" onclick="publish()">Publish Schedule</button>
-      <div id="msg" class="muted"></div>
-    </div>
-
-    <div id="summary" class="muted" style="margin-top:.5rem;"></div>
-    <div id="grid" class="grid"></div>
+  <div class="row">
+    <label>Site</label>
+    <select id="site" class="select"><option value="1">East</option><option value="2">West</option></select>
+    <label>Date</label><input id="date" class="input" type="date"/>
+    <label>Open</label><input id="open" class="input" value="07:00"/>
+    <label>Close</label><input id="close" class="input" value="17:00"/>
+    <label>Loads/day</label><input id="loads" class="input" value="100" type="number" min="1"/>
+    <label>Work-ins/hr</label><input id="workins" class="input" value="0" type="number" min="0"/>
+    <button id="gen" class="button">Publish Schedule</button>
   </div>
+  <div class="muted">Minimum interval auto-computed (East=5m, West=6m). Publishing seeds slots to the database.</div>
+  <div id="out" class="muted" style="margin-top:.6rem"></div>
+  <div id="slots" class="slots"></div>
 </div>
-
 <script>
-function today(){ const d=new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10); }
-document.getElementById('date').value = today();
+(function(){
+  const $=s=>document.querySelector(s);
+  function today(){const d=new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10);}
+  $('#date').value=today();
 
-function minutes(hhmm){ const [h,m]=String(hhmm).split(':').map(Number); return h*60+m; }
-function hhmm(min){ return String(Math.floor(min/60)).padStart(2,'0')+':'+String(min%60).padStart(2,'0'); }
-
-function compute(site, open, close, loads){
-  const minInt = Number(site)===2 ? 6 : 5;
-  const start = minutes(open), end = minutes(close);
-  const dur = Math.max(0, end - start);
-  const n = Math.max(1, Number(loads||0));
-  let interval = 0;
-  if (n>1) interval = Math.max(minInt, Math.floor(dur/(n-1)));
-  const slots = [];
-  for(let i=0;i<n;i++){
-    const t = start + i*interval;
-    if (t<=end) slots.push(hhmm(t));
-  }
-  return { interval, slots };
-}
-
-function generate(){
-  const site = document.getElementById('site').value;
-  const date = document.getElementById('date').value;
-  const open = document.getElementById('open').value || '07:00';
-  const close = document.getElementById('close').value || '17:00';
-  const loads = document.getElementById('loads').value || 0;
-
-  const { interval, slots } = compute(site, open, close, loads);
-  document.getElementById('summary').textContent =
-    `Generated ${slots.length} slots for ${date} at ${site==='1'?'EAST':'WEST'} • Computed interval ≈ ${interval} min.`;
-  const grid = document.getElementById('grid'); grid.innerHTML='';
-  slots.forEach(t=>{ const s=document.createElement('div'); s.className='pill'; s.textContent=t; grid.appendChild(s); });
-  document.getElementById('msg').textContent='';
-}
-
-async function publish(){
-  const site_id = Number(document.getElementById('site').value);
-  const body = {
-    date: document.getElementById('date').value,
-    open_time: document.getElementById('open').value || '07:00',
-    close_time: document.getElementById('close').value || '17:00',
-    loads_target: Number(document.getElementById('loads').value||0),
-    workins_per_hour: Number(document.getElementById('workins').value||0),
+  $('#gen').onclick = async () => {
+    const body = {
+      date: $('#date').value,
+      open_time: $('#open').value,
+      close_time: $('#close').value,
+      loads_target: +$('#loads').value,
+      workins_per_hour: +$('#workins').value
+    };
+    const site = +$('#site').value;
+    $('#out').textContent='Publishing...';
+    try{
+      const r=await fetch(`/api/sites/${site}/schedule`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const j=await r.json();
+      if(!r.ok||j.error) throw new Error(j.error||r.statusText);
+      $('#out').textContent=`Published. Computed interval ≈ ${j.interval_min} min.`;
+      // Lightweight visual list
+      const start=body.open_time, end=body.close_time, int=j.interval_min;
+      const toMin=t=>{const [h,m]=t.split(':').map(Number);return h*60+m;};
+      const toHH=n=>`${String(Math.floor(n/60)).padStart(2,'0')}:${String(n%60).padStart(2,'0')}`;
+      const s=toMin(start), e=toMin(end); const box=$('#slots'); box.innerHTML='';
+      for(let t=s; t<=e; t+=int){ const d=document.createElement('div'); d.className='slot'; d.textContent=toHH(t); box.appendChild(d); }
+    }catch(e){ $('#out').textContent='Error: '+(e.message||e); }
   };
-  if (!body.date || !body.loads_target) { alert('Date and loads are required'); return; }
-
-  try{
-    const r = await fetch(`/api/sites/${site_id}/schedule`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(body)
-    });
-    const j = await r.json().catch(()=>({}));
-    if (!r.ok || j.error) { alert('Publish failed: '+(j.error||r.statusText)); return; }
-    document.getElementById('msg').textContent = `✅ Published. Interval ≈ ${j.interval_min} min.`;
-  }catch(e){ alert('Network error: '+(e?.message||e)); }
-}
+})();
 </script>
 </body>
 </html>
