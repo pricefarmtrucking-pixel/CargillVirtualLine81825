@@ -231,15 +231,24 @@ function getSelectedRows() {
 }
 
 function gatherCancelTargets(selectedRows) {
-  const reservedRows = selectedRows.filter(r => (r.dataset.status || '').toLowerCase() === 'reserved');
-  const siteSet = new Set(reservedRows.map(r => r.dataset.siteId));
-  const dateSet = new Set(reservedRows.map(r => r.dataset.date));
+  const siteSet = new Set(selectedRows.map(r => r.dataset.siteId));
+  const dateSet = new Set(selectedRows.map(r => r.dataset.date));
   const site_id = siteSet.size ? Number([...siteSet][0]) : null;
   const date    = dateSet.size ? [...dateSet][0] : null;
-  const reservation_ids = reservedRows
-    .map(r => r.dataset.reservationId ? Number(r.dataset.reservationId) : null)
-    .filter(n => Number.isInteger(n));
-  return { site_id, date, reservation_ids };
+
+  const reservation_ids = [];
+  const slot_times = [];
+
+  for (const r of selectedRows) {
+    const status = (r.dataset.status || '').toLowerCase();
+    const slot = r.dataset.slotTime;
+    if (status === 'reserved' && r.dataset.reservationId) {
+      reservation_ids.push(Number(r.dataset.reservationId));
+    } else if (status === 'open' && slot) {
+      slot_times.push(slot); // open slots are removed by time
+    }
+  }
+  return { site_id, date, reservation_ids, slot_times };
 }
 
 function wireSelectAll() {
