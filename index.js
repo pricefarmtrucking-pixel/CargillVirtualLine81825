@@ -652,6 +652,124 @@ app.post('/api/slots/hide-open', (req, res) => {
     res.status(500).json({ error:'server error' });
   }
 });
+// ---------- MASS CANCEL (bulk) ------------------------------------------------
+// POST /api/slots/mass-cancel
+// Body:
+// {
+//   "site_id": 1,
+//   "date": "2025-08-23",
+//   // EITHER:
+///  "reservation_ids": [12,15,18],
+//   // OR:
+///  "slot_times": ["07:00","07:07","07:14"],
+//   "reason": "weather",
+//   "notify": true
+// }
+app.post('/api/slots/mass-cancel', async (req, res) => {
+  try {
+    const { site_id, date, reservation_ids = [], slot_times = [], reason = '', notify = false } = req.body || {};
+    if (!site_id || !date || (!reservation_ids.length && !slot_times.length)) {
+      return res.status(400).json({ error: 'site_id, date and reservation_ids or slot_times required' });
+    }
+
+    // Resolve reservations we’re going to cancel:
+    let targets = [];
+    if (reservation_ids.length) {
+      const inClause = reservation_ids.map(() => '?').join(',');
+      targets = db.prepare(
+        `SELECT * FROM slot_reservations WHERE id IN (${inClause}) AND site_id=? AND date=?`
+      ).all(...reservation_ids, site_id, date);
+    } else {
+      const inClause = slot_times.map(() => '?').join(',');
+      targets = db.prepare(
+        `SELECT * FROM slot_reservations WHERE site_id=? AND date=? AND slot_time IN (${inClause})`
+      ).all(site_id, date, ...slot_times);
+    }
+
+    if (!targets.length) {
+      return res.json({ ok: true, canceled: 0, notified: 0 });
+    }
+
+    const phones = [];
+    const tx = db.transaction(() => {
+      for (const r of targets) {
+        // free the slot if it points at this reservation
+        db.prepare(`
+          UPDATE time_slots
+             SET reserved_truck_id=NULL, reserved_at=NULL
+           WHERE site_id=? AND date=? AND slot_time=? AND reserved_truck_id=?
+        `).run(r.site_id, r.date, r.slot_time, r.id);
+
+        // remove the reservation (or flag as canceled if you prefer)
+        db.prepare(`DELETE FROM slot_reservations WHERE id=?`).run(r.id);
+
+        if (notify && r.driver_phone) phones.push(r.driver_phone);
+      }
+    });
+    tx();
+
+    // send notifications (best effort)
+    let notified = 0;
+    if (notify && phones.length) {
+      const msg = `Cargill: Appointments on ${date} (${site_id === 1 ? 'EAST' : 'WEST'}) were cancelled${reason ? `: ${reason}` : ''}.`;
+      for (const to of phones) {
+        try {
+          await sendSMS(to, msg);
+          notified += 1;
+        } catch {
+          /* ignore per-recipient failure */
+        }
+      }
+    }
+
+    res.json({ ok: true, canceled: targets.length, notified });
+  } catch (e) {
+    console.error('SQL error in /api/slots/mass-cancel:', e);
+    res.status(500).json({ error: 'server error' });
+  }
+});
+
+
+// ---------- BULK NOTIFY (optional) -------------------------------------------
+// POST /api/slots/notify-bulk
+// Body:
+// {
+//   "site_id": 1,
+//   "date": "2025-08-23",
+//   "reservation_ids": [12,15,18],      // or slot_times: ["07:00","07:07"]
+//   "message": "Probe closed until 9am"
+// }
+app.post('/api/slots/notify-bulk', async (req, res) => {
+  try {
+    const { site_id, date, reservation_ids = [], slot_times = [], message } = req.body || {};
+    if (!site_id || !date || !message || (!reservation_ids.length && !slot_times.length)) {
+      return res.status(400).json({ error: 'site_id, date, message and reservation_ids or slot_times required' });
+    }
+
+    let rows = [];
+    if (reservation_ids.length) {
+      const inClause = reservation_ids.map(() => '?').join(',');
+      rows = db.prepare(
+        `SELECT driver_phone FROM slot_reservations WHERE id IN (${inClause}) AND site_id=? AND date=?`
+      ).all(...reservation_ids, site_id, date);
+    } else {
+      const inClause = slot_times.map(() => '?').join(',');
+      rows = db.prepare(
+        `SELECT driver_phone FROM slot_reservations WHERE site_id=? AND date=? AND slot_time IN (${inClause})`
+      ).all(site_id, date, ...slot_times);
+    }
+
+    let count = 0;
+    for (const r of rows) {
+      if (!r.driver_phone) continue;
+      try { await sendSMS(r.driver_phone, message); count += 1; } catch {}
+    }
+    res.json({ ok: true, notified: count });
+  } catch (e) {
+    console.error('SQL error in /api/slots/notify-bulk:', e);
+    res.status(500).json({ error: 'server error' });
+  }
+});
 
 // ------------------------- Start ---------------------------------------------
 app.listen(PORT, () => {
