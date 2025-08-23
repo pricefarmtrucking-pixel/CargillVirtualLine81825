@@ -234,17 +234,64 @@ app.post('/api/sites/:id/slots/preview', (req, res) => {
 // ------------------------- Schedule PUBLISH (overwrite) ----------------------
 // POST /api/sites/:id/schedule  { date, open_time, close_time, loads_target, workins_per_hour }
 app.post('/api/sites/:id/schedule', (req, res) => {
-  try {
-    const site_id = +req.params.id;
-    const { date, open_time, close_time, loads_target, workins_per_hour = 0 } = req.body || {};
-    if (!site_id || !date || !open_time || !close_time || !loads_target)
-      return res.status(400).json({ error:'missing fields' });
+  const DEBUG = process.env.NODE_ENV !== 'production';
 
-    const minInt   = site_id === 2 ? 6 : 5;
-    const start    = toMin(open_time);
-    const end      = toMin(close_time);
-    const span     = Math.max(1, end - start);
-    const interval = Math.max(minInt, Math.floor(span / Math.max(1, loads_target-1)));
+  try {
+    const site_id = Number(req.params.id);
+    // Force the types we need and trim strings
+    let {
+      date,
+      open_time = '',
+      close_time = '',
+      loads_target,
+      workins_per_hour = 0
+    } = req.body || {};
+
+    date = String(date || '').trim();
+    open_time = String(open_time || '').trim();
+    close_time = String(close_time || '').trim();
+    loads_target = Number(loads_target);
+    workins_per_hour = Number(workins_per_hour);
+
+    // Validate inputs
+    const hhmmRe = /^(?:[01]\d|2[0-3]):[0-5]\d$/; // HH:MM 00–23:00–59
+    if (!site_id || !date || !open_time || !close_time || !loads_target) {
+      return res.status(400).json({ error: 'missing fields' });
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+    }
+    if (!hhmmRe.test(open_time) || !hhmmRe.test(close_time)) {
+      return res.status(400).json({ error: 'open/close must be HH:MM' });
+    }
+    if (!Number.isFinite(loads_target) || loads_target < 1) {
+      return res.status(400).json({ error: 'loads_target must be >= 1' });
+    }
+    if (!Number.isFinite(workins_per_hour) || workins_per_hour < 0) {
+      return res.status(400).json({ error: 'workins_per_hour must be >= 0' });
+    }
+
+    // EAST(1)=5 min, WEST(2)=6 min minimum
+    const minInt = site_id === 2 ? 6 : 5;
+    const toMin = (t) => {
+      const [h, m] = t.split(':').map(n => Number(n));
+      return h * 60 + m;
+    };
+    const toHHMM = (mins) => {
+      const h = String(Math.floor(mins / 60)).padStart(2, '0');
+      const m = String(mins % 60).padStart(2, '0');
+      return `${h}:${m}`;
+    };
+
+    const start = toMin(open_time);
+    const end   = toMin(close_time);
+    if (!(end > start)) {
+      return res.status(400).json({ error: 'close must be after open' });
+    }
+
+    const span = end - start;
+    // Place first load at open_time, last load before/at close_time
+    const interval = Math.max(minInt, Math.floor(span / Math.max(1, loads_target - 1)));
 
     const tx = db.transaction(() => {
       // Save/update settings
@@ -252,24 +299,24 @@ app.post('/api/sites/:id/schedule', (req, res) => {
         INSERT INTO site_settings (site_id, date, loads_target, open_time, close_time, workins_per_hour)
         VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(site_id, date) DO UPDATE SET
-          loads_target      = excluded.loads_target,
-          open_time         = excluded.open_time,
-          close_time        = excluded.close_time,
-          workins_per_hour  = excluded.workins_per_hour,
-          updated_at        = CURRENT_TIMESTAMP
+          loads_target     = excluded.loads_target,
+          open_time        = excluded.open_time,
+          close_time       = excluded.close_time,
+          workins_per_hour = excluded.workins_per_hour,
+          updated_at       = CURRENT_TIMESTAMP
       `).run(site_id, date, loads_target, open_time, close_time, workins_per_hour);
 
-      // Overwrite non-reserved slots for that date
+      // Remove ONLY non-reserved rows for that day (keep any live reservations)
       db.prepare(`
         DELETE FROM time_slots
-        WHERE site_id=? AND date=? AND reserved_truck_id IS NULL
+        WHERE site_id = ? AND date = ? AND (reserved_truck_id IS NULL OR reserved_truck_id = 0)
       `).run(site_id, date);
 
-      // Always clear holds for this date
+      // Clear holds for the day (keeps reserved rows)
       db.prepare(`
         UPDATE time_slots
-        SET hold_token=NULL, hold_expires_at=NULL
-        WHERE site_id=? AND date=?
+        SET hold_token = NULL, hold_expires_at = NULL
+        WHERE site_id = ? AND date = ?
       `).run(site_id, date);
 
       // Insert regular slots
@@ -277,29 +324,39 @@ app.post('/api/sites/:id/schedule', (req, res) => {
         INSERT OR IGNORE INTO time_slots (site_id, date, slot_time, is_workin)
         VALUES (?, ?, ?, 0)
       `);
-      for (let i=0; i<loads_target; i++) {
-        const t = start + i*interval;
-        if (t>=start && t<=end) ins.run(site_id, date, toHHMM(t));
+
+      for (let i = 0; i < loads_target; i++) {
+        const t = start + i * interval;
+        if (t >= start && t <= end) {
+          ins.run(site_id, date, toHHMM(t));
+        }
       }
 
-      // Insert work-ins
+      // Optional work-ins (even spacing within each hour)
       if (workins_per_hour > 0) {
         const step = Math.max(1, Math.floor(60 / workins_per_hour));
         const insW = db.prepare(`
           INSERT OR IGNORE INTO time_slots (site_id, date, slot_time, is_workin)
           VALUES (?, ?, ?, 1)
         `);
-        for (let m=start; m<=end; m+=step) {
+        // Generate across the open–close window
+        for (let m = start; m <= end; m += step) {
           insW.run(site_id, date, toHHMM(m));
         }
       }
     });
-    tx();
 
-    res.json({ ok:true, interval_min: interval });
+    try {
+      tx();
+    } catch (sqlErr) {
+      console.error('SQL error in /api/sites/:id/schedule:', sqlErr);
+      return res.status(500).json({ error: DEBUG ? String(sqlErr) : 'server error' });
+    }
+
+    return res.json({ ok: true, interval_min: interval });
   } catch (e) {
     console.error('/api/sites/:id/schedule', e);
-    res.status(500).json({ error:'server error' });
+    return res.status(500).json({ error: 'server error' });
   }
 });
 
