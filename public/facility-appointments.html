@@ -2,265 +2,333 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Facility — Appointments</title>
-  <link rel="stylesheet" href="styles.css"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Facility Appointments — Cargill Soybean Virtual Line</title>
   <style>
-    .toolbar{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin:12px 0}
-    table{width:100%;border-collapse:collapse}
-    th,td{padding:8px;border-bottom:1px solid #eee;text-align:left;white-space:nowrap}
-    th.sticky{position:sticky;top:0;background:#fff;z-index:1}
-    .chip{padding:2px 8px;border-radius:12px;font-size:12px;display:inline-block}
-    .chip.open{background:#f2f7ff}
-    .chip.reserved{background:#e9f7ef}
-    .dim{opacity:.5}
-    .right{margin-left:auto}
-    input[type="time"]{padding:6px}
-    .btn{padding:6px 10px;border:1px solid #ddd;border-radius:6px;background:#fff;cursor:pointer}
-    .btn.primary{background:#2d6cdf;color:#fff;border-color:#2d6cdf}
-    .btn.danger{background:#e54;color:#fff;border-color:#e54}
-    .btn:disabled{opacity:.6;cursor:not-allowed}
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
+    .container { max-width: 1200px; margin: 4vh auto; padding: 0 1rem; }
+    .toolbar { display:grid; grid-template-columns: repeat(12, 1fr); gap:.5rem; align-items:end; }
+    .toolbar .span3 { grid-column: span 3; }
+    .toolbar .span2 { grid-column: span 2; }
+    .toolbar .span1 { grid-column: span 1; }
+    .toolbar .span4 { grid-column: span 4; }
+    .card { border:1px solid #ddd; border-radius:12px; padding:1rem; background:#fff; box-shadow: 0 2px 12px rgba(0,0,0,.04); }
+    .button { padding:.55rem .9rem; border:1px solid #ccc; border-radius:10px; background:#f8f8f8; cursor:pointer; }
+    .button.primary { background:#1e90ff; color:#fff; border-color:#1e90ff; }
+    .button.danger { background:#e03131; color:#fff; border-color:#e03131; }
+    .button:disabled { opacity:.6; cursor:default; }
+    .input, select { width:100%; padding:.55rem .65rem; border:1px solid #ccc; border-radius:10px; }
+    .muted { color:#666; font-size:.9rem; }
+    table { width:100%; border-collapse: collapse; margin-top: .75rem; }
+    th, td { padding:.55rem .6rem; border-bottom:1px solid #eee; text-align:left; vertical-align: middle; }
+    thead th { position:sticky; top:0; background:#fff; z-index:1; }
+    .status-pill { display:inline-block; padding:.2rem .5rem; border-radius:999px; font-size:.8rem; }
+    .status-open { background:#e6fcf5; color:#0b7285; border:1px solid #c3fae8; }
+    .status-reserved { background:#fff5f5; color:#c92a2a; border:1px solid #ffe3e3; }
+    .nowrap { white-space: nowrap; }
+    .row-actions button { margin-right:.4rem; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h2>Cargill Soybean — Facility</h2>
+    <h1>Facility Appointments</h1>
 
-    <div class="toolbar">
-      <label>Site
-        <select id="siteSel">
-          <option value="1">East (1)</option>
-          <option value="2">West (2)</option>
-        </select>
-      </label>
+    <div class="card">
+      <div class="toolbar">
+        <div class="span2">
+          <label>Site</label>
+          <select id="siteId" class="input">
+            <option value="1">East (1)</option>
+            <option value="2">West (2)</option>
+          </select>
+        </div>
+        <div class="span2">
+          <label>Date</label>
+          <input id="date" class="input" type="date"/>
+        </div>
+        <div class="span2">
+          <label>Status</label>
+          <select id="filterStatus" class="input">
+            <option value="all">All</option>
+            <option value="open">Open only</option>
+            <option value="reserved">Reserved only</option>
+          </select>
+        </div>
+        <div class="span2">
+          <label>From (HH:MM)</label>
+          <input id="timeFrom" class="input" type="time" step="60" placeholder="07:00"/>
+        </div>
+        <div class="span2">
+          <label>To (HH:MM)</label>
+          <input id="timeTo" class="input" type="time" step="60" placeholder="17:00"/>
+        </div>
 
-      <label>Date
-        <input type="date" id="dateSel"/>
-      </label>
+        <div class="span2">
+          <button id="btnRefresh" class="button primary" style="width:100%;">Refresh</button>
+        </div>
 
-      <button class="btn" id="refreshBtn">Refresh</button>
+        <div class="span3">
+          <button id="btnMassCancel" class="button danger" style="width:100%;">Mass Cancel</button>
+        </div>
+        <div class="span3">
+          <button id="btnMassNotify" class="button" style="width:100%;">Mass Text</button>
+        </div>
+        <div class="span6 muted">
+          Tip: filter first, then use the checkboxes to select rows. “Mass Cancel” only cancels **reserved** rows.
+        </div>
+      </div>
 
-      <span class="right"></span>
+      <table>
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="checkAll"></th>
+            <th>Time</th>
+            <th>Status</th>
+            <th>Driver</th>
+            <th>Phone</th>
+            <th>Plate</th>
+            <th>Vendor</th>
+            <th>Farm/Ticket</th>
+            <th class="nowrap">Est. Amt</th>
+            <th>Unit</th>
+            <th>Probe Code</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
 
-      <label>Filter
-        <select id="filterSel">
-          <option value="all">All</option>
-          <option value="open">Open</option>
-          <option value="reserved">Reserved</option>
-        </select>
-      </label>
-
-      <label>From
-        <input type="time" id="fromTime" step="60" value="00:00">
-      </label>
-      <label>To
-        <input type="time" id="toTime" step="60" value="23:59">
-      </label>
-
-      <button class="btn" id="clearFilters">Clear</button>
+      <div class="muted" id="summary" style="margin-top:.5rem;"></div>
     </div>
-
-    <div class="toolbar">
-      <label><input type="checkbox" id="masterChk"/> Select all</label>
-      <button class="btn" id="textBtn" disabled>Mass Text</button>
-      <button class="btn danger" id="cancelBtn" disabled>Mass Cancel</button>
-      <button class="btn" id="hideOpenBtn" disabled>Hide Open Slots</button>
-    </div>
-
-    <table id="grid">
-      <thead>
-        <tr>
-          <th class="sticky"><input type="checkbox" id="masterChkTop"/></th>
-          <th class="sticky">Time</th>
-          <th class="sticky">Driver</th>
-          <th class="sticky">Plate</th>
-          <th class="sticky">Vendor</th>
-          <th class="sticky">Farm/Ticket</th>
-          <th class="sticky">Est. Amt</th>
-          <th class="sticky">Unit</th>
-          <th class="sticky">Phone</th>
-          <th class="sticky">Probe Code</th>
-          <th class="sticky">Status</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-
-    <p class="dim">* “Probe Code” is the 4‑digit confirmation the driver shows at the probe desk.</p>
   </div>
 
-  <script>
-    const siteSel   = document.getElementById('siteSel');
-    const dateSel   = document.getElementById('dateSel');
-    const refreshBtn= document.getElementById('refreshBtn');
-    const filterSel = document.getElementById('filterSel');
-    const fromTime  = document.getElementById('fromTime');
-    const toTime    = document.getElementById('toTime');
-    const clearFilters = document.getElementById('clearFilters');
+<script>
+/* ============================ Utilities ============================ */
+const $ = (id) => document.getElementById(id);
+const toMin = (hhmm) => { const [h,m]=String(hhmm).split(':').map(n=>+n); return h*60+m; };
+const pad2 = (n) => String(n).padStart(2,'0');
+function toast(msg, ok=true) {
+  console[ok ? 'log' : 'warn'](msg);
+  const el = document.createElement('div');
+  el.textContent = msg;
+  Object.assign(el.style, {
+    position:'fixed', bottom:'16px', left:'50%', transform:'translateX(-50%)',
+    padding:'10px 14px', borderRadius:'8px', background: ok ? '#12b886' : '#fa5252',
+    color:'#fff', zIndex:9999
+  });
+  document.body.appendChild(el);
+  setTimeout(()=>el.remove(), 2200);
+}
+function todayISO(){
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0,10);
+}
 
-    const masterChk = document.getElementById('masterChk');
-    const masterChkTop = document.getElementById('masterChkTop');
-    const textBtn   = document.getElementById('textBtn');
-    const cancelBtn = document.getElementById('cancelBtn');
-    const hideOpenBtn = document.getElementById('hideOpenBtn');
-    const gridBody  = document.querySelector('#grid tbody');
+/* ============================ State ============================ */
+let RAW_ITEMS = [];  // as returned by /api/appointments
+let FILTERED  = [];
 
-    // init date to today (local)
-    dateSel.value = new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
+/* ============================ Rendering ============================ */
+function renderRows() {
+  const tbody = $('tbody');
+  tbody.innerHTML = '';
 
-    let allItems = []; // raw rows from server
-    let visible  = []; // filtered rows
+  const rows = FILTERED.slice().sort((a,b) => toMin(a.slot_time) - toMin(b.slot_time));
 
-    function toMin(hhmm){ const [h,m]=hhmm.split(':').map(Number); return h*60+m; }
+  for (const r of rows) {
+    const status = r.reservation_id ? 'reserved' : 'open';
+    const tr = document.createElement('tr');
+    tr.className = 'slot-row';
+    tr.dataset.siteId = String(currentSiteId());
+    tr.dataset.date   = currentDate();
+    tr.dataset.slotTime = r.slot_time;
+    tr.dataset.status = status;
+    if (r.reservation_id) tr.dataset.reservationId = String(r.reservation_id);
 
-    async function load() {
-      const url = `/api/appointments?site_id=${siteSel.value}&date=${dateSel.value}`;
-      const r = await fetch(url);
-      if (!r.ok) { alert('Load failed'); return; }
-      const data = await r.json();
-      allItems = data.items || [];
-      applyFilters();
+    const amt = (r.est_amount ?? '') === '' || r.est_amount == null ? '' : String(r.est_amount);
+    const unit = (r.est_unit ?? '') || '';
+
+    tr.innerHTML = `
+      <td><input type="checkbox" class="row-check"></td>
+      <td class="nowrap">${r.slot_time}</td>
+      <td>
+        <span class="status-pill ${status === 'reserved' ? 'status-reserved':'status-open'}">
+          ${status}
+        </span>
+      </td>
+      <td>${r.driver_name ?? ''}</td>
+      <td>${r.driver_phone ?? ''}</td>
+      <td>${r.license_plate ?? ''}</td>
+      <td>${r.vendor_name ?? ''}</td>
+      <td>${r.farm_or_ticket ?? ''}</td>
+      <td>${amt}</td>
+      <td>${unit}</td>
+      <td>${r.queue_code ?? ''}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  // reset select-all each render
+  const all = $('checkAll');
+  if (all) all.checked = false;
+
+  // update summary
+  const openCount = rows.filter(r => !r.reservation_id).length;
+  const resCount  = rows.length - openCount;
+  $('summary').textContent = `Showing ${rows.length} slots — ${openCount} open, ${resCount} reserved.`;
+}
+
+/* ============================ Filters ============================ */
+function applyFilters() {
+  const status = $('filterStatus').value; // all/open/reserved
+  const from = $('timeFrom').value || '';
+  const to   = $('timeTo').value   || '';
+
+  FILTERED = RAW_ITEMS.filter(it => {
+    // status filter
+    if (status === 'open' && it.reservation_id) return false;
+    if (status === 'reserved' && !it.reservation_id) return false;
+
+    // time filter
+    if (from && to) {
+      const tm = toMin(it.slot_time);
+      if (tm < toMin(from) || tm > toMin(to)) return false;
+    } else if (from) {
+      if (toMin(it.slot_time) < toMin(from)) return false;
+    } else if (to) {
+      if (toMin(it.slot_time) > toMin(to)) return false;
     }
 
-    function applyFilters() {
-      const f = filterSel.value;
-      const from = toMin(fromTime.value);
-      const to   = toMin(toTime.value);
+    return true;
+  });
 
-      visible = allItems.filter(x => {
-        const t = toMin(x.slot_time);
-        if (t < from || t > to) return false;
-        if (f === 'open')     return !x.reservation_id;
-        if (f === 'reserved') return !!x.reservation_id;
-        return true;
+  renderRows();
+}
+
+/* ============================ Data load ============================ */
+function currentSiteId(){ return Number($('siteId').value); }
+function currentDate(){ return $('date').value || todayISO(); }
+
+async function loadAppointments() {
+  try {
+    const site_id = currentSiteId();
+    const date = currentDate();
+    const url = `/api/appointments?site_id=${encodeURIComponent(site_id)}&date=${encodeURIComponent(date)}`;
+    const r = await fetch(url, { credentials:'include' });
+    const j = await r.json();
+    if (!r.ok || j.error) throw new Error(j.error || r.statusText);
+    RAW_ITEMS = Array.isArray(j.items) ? j.items : [];
+    applyFilters();
+  } catch (e) {
+    console.error(e);
+    toast('Failed to load appointments: ' + (e.message || e), false);
+  }
+}
+
+/* ============================ Mass Actions ============================ */
+function getSelectedRows() {
+  return [...document.querySelectorAll('tr.slot-row')].filter(tr => tr.querySelector('.row-check')?.checked);
+}
+
+function gatherCancelTargets(selectedRows) {
+  const reservedRows = selectedRows.filter(r => (r.dataset.status || '').toLowerCase() === 'reserved');
+  const siteSet = new Set(reservedRows.map(r => r.dataset.siteId));
+  const dateSet = new Set(reservedRows.map(r => r.dataset.date));
+  const site_id = siteSet.size ? Number([...siteSet][0]) : null;
+  const date    = dateSet.size ? [...dateSet][0] : null;
+  const reservation_ids = reservedRows
+    .map(r => r.dataset.reservationId ? Number(r.dataset.reservationId) : null)
+    .filter(n => Number.isInteger(n));
+  return { site_id, date, reservation_ids };
+}
+
+function wireSelectAll() {
+  const all = $('checkAll');
+  if (!all) return;
+  all.addEventListener('change', () => {
+    document.querySelectorAll('.row-check').forEach(cb => { cb.checked = all.checked; });
+  });
+}
+
+function wireMassCancel() {
+  $('btnMassCancel').addEventListener('click', async () => {
+    const selected = getSelectedRows();
+    if (!selected.length) { toast('Select at least one row.', false); return; }
+
+    const { site_id, date, reservation_ids } = gatherCancelTargets(selected);
+    if (!site_id || !date || !reservation_ids.length) {
+      toast('Nothing to cancel (select reserved rows).', false); return;
+    }
+
+    const ok = confirm(`Cancel ${reservation_ids.length} reservation(s) on ${date} (site ${site_id})? Drivers are not notified here.`);
+    if (!ok) return;
+
+    try {
+      const res = await fetch('/api/slots/mass-cancel', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({
+          site_id, date, reservation_ids,
+          notify: false,      // set true if you want SMS here also
+          reason: ''          // optional reason
+        })
       });
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || res.statusText);
+      toast(`Canceled ${j.canceled} reservation(s).`);
+      setTimeout(loadAppointments, 350);
+    } catch (e) {
+      console.error(e);
+      toast('Mass cancel failed: ' + (e.message || e), false);
+    }
+  });
+}
 
-      // sort chronologically (already sorted from API, but re-sort after range filter)
-      visible.sort((a,b) => toMin(a.slot_time) - toMin(b.slot_time));
-      render();
+function wireMassNotify() {
+  $('btnMassNotify').addEventListener('click', async () => {
+    const selected = getSelectedRows();
+    if (!selected.length) { toast('Select at least one row.', false); return; }
+
+    const { site_id, date, reservation_ids } = gatherCancelTargets(selected);
+    if (!site_id || !date || !reservation_ids.length) {
+      toast('Select reserved rows to text.', false); return;
     }
 
-    function render() {
-      gridBody.innerHTML = '';
-      for (const row of visible) {
-        const tr = document.createElement('tr');
-        tr.dataset.slot = row.slot_time;
-        tr.dataset.reservationId = row.reservation_id || '';
+    const message = prompt('Message to send to selected drivers:');
+    if (!message) return;
 
-        const chk = document.createElement('input');
-        chk.type = 'checkbox';
-        chk.className = 'rowChk';
-        chk.dataset.slot = row.slot_time;
-        chk.dataset.reservationId = row.reservation_id || '';
-        chk.addEventListener('change', updateBulkButtons);
-
-        tr.appendChild(td(chk));
-        tr.appendChild(td(row.slot_time));
-        tr.appendChild(td(row.driver_name || '—'));
-        tr.appendChild(td(row.license_plate || '—'));
-        tr.appendChild(td(row.vendor_name || '—'));
-        tr.appendChild(td(row.farm_or_ticket || '—'));
-        tr.appendChild(td(row.est_amount ?? '—'));
-        tr.appendChild(td(row.est_unit || '—'));
-        tr.appendChild(td(row.driver_phone || '—'));
-        tr.appendChild(td(row.queue_code || '—'));
-
-        const chip = document.createElement('span');
-        chip.className = 'chip ' + (row.reservation_id ? 'reserved' : 'open');
-        chip.textContent = row.reservation_id ? 'reserved' : 'open';
-        tr.appendChild(td(chip));
-
-        gridBody.appendChild(tr);
-      }
-      masterChk.checked = false;
-      masterChkTop.checked = false;
-      updateBulkButtons();
-    }
-
-    function td(v) {
-      const el = document.createElement('td');
-      if (v instanceof Node) el.appendChild(v); else el.textContent = v;
-      return el;
-    }
-
-    function selected() {
-      const chks = Array.from(document.querySelectorAll('.rowChk:checked'));
-      const reservation_ids = chks.map(c => c.dataset.reservationId).filter(Boolean).map(Number);
-      const open_slots = chks.filter(c => !c.dataset.reservationId).map(c => c.dataset.slot);
-      return { reservation_ids, open_slots };
-    }
-
-    function updateBulkButtons() {
-      const { reservation_ids, open_slots } = selected();
-      textBtn.disabled   = reservation_ids.length === 0;
-      cancelBtn.disabled = reservation_ids.length === 0;
-      hideOpenBtn.disabled = open_slots.length === 0;
-    }
-
-    // master checkboxes (top/bottom synced)
-    function setAllChecked(v){
-      document.querySelectorAll('.rowChk').forEach(c => c.checked = v);
-      masterChk.checked = v; masterChkTop.checked = v;
-      updateBulkButtons();
-    }
-    masterChk.addEventListener('change', e => setAllChecked(e.target.checked));
-    masterChkTop.addEventListener('change', e => setAllChecked(e.target.checked));
-
-    // Bulk actions
-    textBtn.addEventListener('click', async () => {
-      const { reservation_ids } = selected();
-      const message = prompt('Text to send to selected drivers:');
-      if (!message) return;
-      const r = await fetch('/api/slots/mass-notify', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ site_id: Number(siteSel.value), date: dateSel.value, reservation_ids, message })
+    try {
+      const res = await fetch('/api/slots/mass-notify', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ site_id, date, reservation_ids, message })
       });
-      if (!r.ok) return alert('Failed to send');
-      const data = await r.json();
-      alert(`Sent ${data.sent}/${data.targeted}`);
-    });
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || res.statusText);
+      toast(`Sent ${j.sent}/${j.targeted} texts.`);
+    } catch (e) {
+      console.error(e);
+      toast('Mass text failed: ' + (e.message || e), false);
+    }
+  });
+}
 
-    cancelBtn.addEventListener('click', async () => {
-      const { reservation_ids } = selected();
-      if (!reservation_ids.length) return;
-      if (!confirm(`Cancel ${reservation_ids.length} reservation(s)?`)) return;
-      const reason = prompt('Optional reason (included in SMS if notify enabled):') || '';
-      const notify = confirm('Send cancel SMS to drivers?');
-      const r = await fetch('/api/slots/mass-cancel', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ site_id: Number(siteSel.value), date: dateSel.value, reservation_ids, reason, notify })
-      });
-      if (!r.ok) return alert('Failed to cancel');
-      await load();
-      alert('Done.');
-    });
+/* ============================ Events ============================ */
+$('btnRefresh').addEventListener('click', loadAppointments);
+$('filterStatus').addEventListener('change', applyFilters);
+$('timeFrom').addEventListener('change', applyFilters);
+$('timeTo').addEventListener('change', applyFilters);
+$('siteId').addEventListener('change', loadAppointments);
+$('date').addEventListener('change', loadAppointments);
 
-    hideOpenBtn.addEventListener('click', async () => {
-      const { open_slots } = selected();
-      if (!open_slots.length) return;
-      if (!confirm(`Hide ${open_slots.length} open slot(s) from availability?`)) return;
-      const r = await fetch('/api/slots/hide-open', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ site_id: Number(siteSel.value), date: dateSel.value, slot_times: open_slots })
-      });
-      if (!r.ok) return alert('Failed to hide');
-      await load();
-    });
-
-    // Filters
-    [filterSel, fromTime, toTime].forEach(el => el.addEventListener('change', applyFilters));
-    clearFilters.addEventListener('click', () => {
-      filterSel.value = 'all';
-      fromTime.value = '00:00';
-      toTime.value   = '23:59';
-      applyFilters();
-    });
-
-    refreshBtn.addEventListener('click', load);
-    siteSel.addEventListener('change', load);
-    dateSel.addEventListener('change', load);
-
-    load();
-  </script>
+// init
+(function init() {
+  $('date').value = todayISO();
+  wireSelectAll();
+  wireMassCancel();
+  wireMassNotify();
+  loadAppointments();
+})();
+</script>
 </body>
 </html>
