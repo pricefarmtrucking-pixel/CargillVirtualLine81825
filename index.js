@@ -1,4 +1,4 @@
-// index.js — Cargill Virtual Line (ESM, full backend)
+// index.js — Cargill Virtual Line (ESM, full backend, patched)
 import 'dotenv/config';
 import express from 'express';
 import cookieParser from 'cookie-parser';
@@ -12,9 +12,10 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 
-const PORT = Number(process.env.PORT || 10000);
+const NODE_ENV    = process.env.NODE_ENV || 'production';
+const PORT        = Number(process.env.PORT || 10000);
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
-const DB_PATH = process.env.DB_PATH || 'data.db';
+const DB_PATH     = process.env.DB_PATH || 'data.db';
 
 // Support both naming schemes for Render vs prior code
 const TWILIO_SID  = process.env.TWILIO_ACCOUNT_SID || process.env.TWILIO_SID;
@@ -92,7 +93,7 @@ async function sendSMS(to, body) {
     const msg = await twilio.messages.create({ from: TWILIO_FROM, to, body });
     return { sent:true, sid: msg.sid };
   } catch (e) {
-    console.error('Twilio error:', e?.message || e);
+    console.error('Twilio error:', e?.stack || e?.message || e);
     return { sent:false, error:e?.message || 'twilio-failed' };
   }
 }
@@ -150,8 +151,8 @@ app.post('/auth/request-code', async (req, res) => {
     );
     res.json({ ok:true, sms });
   } catch (e) {
-    console.error('/auth/request-code', e);
-    res.status(500).json({ error:'server error' });
+    console.error('/auth/request-code', e?.stack || e);
+    res.status(500).json({ error:'server error', error_detail: e?.message });
   }
 });
 
@@ -177,61 +178,80 @@ app.post('/auth/verify', (req, res) => {
     res.cookie('session_role' , role , { httpOnly:false, sameSite:'lax' });
     res.json({ ok:true });
   } catch (e) {
-    console.error('/auth/verify', e);
-    res.status(500).json({ error:'server error' });
+    console.error('/auth/verify', e?.stack || e);
+    res.status(500).json({ error:'server error', error_detail: e?.message });
   }
 });
 
 // ------------------------- Schedule PREVIEW (Generate Slots) -----------------
-// POST /api/sites/:id/slots/preview  { date, open_time, close_time, loads_target, workins_per_hour }
 app.post('/api/sites/:id/slots/preview', (req, res) => {
   try {
     const site_id = +req.params.id;
-    const { date, open_time, close_time, loads_target, workins_per_hour = 0 } = req.body || {};
-    if (!site_id || !date || !open_time || !close_time || !loads_target)
+    let { date, open_time, close_time, loads_target, workins_per_hour = 0 } = req.body || {};
+    loads_target = Number(loads_target);
+    workins_per_hour = Number(workins_per_hour);
+
+    if (!site_id || !date || !open_time || !close_time || !Number.isFinite(loads_target))
       return res.status(400).json({ error:'missing fields' });
 
     const minInt = site_id === 2 ? 6 : 5;
     const start  = toMin(open_time);
     const end    = toMin(close_time);
-    const span   = Math.max(1, end - start);
-    const interval = Math.max(minInt, Math.floor(span / Math.max(1, loads_target-1)));
+    if (!(end > start)) return res.status(400).json({ error: 'close_time must be after open_time' });
+
+    const span = end - start;
+    const interval = loads_target <= 1
+      ? span
+      : Math.max(minInt, Math.floor(span / (loads_target - 1)));
 
     const times = [];
-    for (let i=0; i<loads_target; i++) {
-      const t = start + i*interval;
-      if (t>=start && t<=end) times.push({ slot_time: toHHMM(t), is_workin: 0 });
+    if (loads_target <= 1) {
+      times.push({ slot_time: toHHMM(start), is_workin: 0 });
+    } else {
+      let t = start;
+      for (let i = 0; i < loads_target && t <= end; i++, t += interval) {
+        times.push({ slot_time: toHHMM(Math.min(t, end)), is_workin: 0 });
+      }
     }
-    if (workins_per_hour > 0) {
-      const step = Math.max(1, Math.floor(60/workins_per_hour));
-      for (let m=start; m<=end; m+=step) {
+
+    if (Number.isFinite(workins_per_hour) && workins_per_hour > 0) {
+      const step = Math.max(1, Math.floor(60 / workins_per_hour));
+      for (let m = start; m <= end; m += step) {
         times.push({ slot_time: toHHMM(m), is_workin: 1 });
       }
-      // sort combined list by time
       times.sort((a,b)=> toMin(a.slot_time)-toMin(b.slot_time));
     }
 
     res.json({ ok:true, interval_min: interval, items: times });
   } catch (e) {
-    console.error('/api/sites/:id/slots/preview', e);
-    res.status(500).json({ error:'server error' });
+    console.error('/api/sites/:id/slots/preview', e?.stack || e);
+    res.status(500).json({ error:'server error', error_detail: e?.message });
   }
 });
 
 // ------------------------- Schedule PUBLISH (overwrite) ----------------------
-// POST /api/sites/:id/schedule  { date, open_time, close_time, loads_target, workins_per_hour }
 app.post('/api/sites/:id/schedule', (req, res) => {
   try {
     const site_id = +req.params.id;
-    const { date, open_time, close_time, loads_target, workins_per_hour = 0 } = req.body || {};
-    if (!site_id || !date || !open_time || !close_time || !loads_target)
+    let { date, open_time, close_time, loads_target, workins_per_hour = 0 } = req.body || {};
+    loads_target = Number(loads_target);
+    workins_per_hour = Number(workins_per_hour);
+
+    if (!site_id || !date || !open_time || !close_time || !Number.isFinite(loads_target))
       return res.status(400).json({ error:'missing fields' });
+    if (loads_target < 1) return res.status(400).json({ error: 'loads_target must be >= 1' });
 
     const minInt   = site_id === 2 ? 6 : 5;
     const start    = toMin(open_time);
     const end      = toMin(close_time);
-    const span     = Math.max(1, end - start);
-    const interval = Math.max(minInt, Math.floor(span / Math.max(1, loads_target-1)));
+    if (!(end > start)) return res.status(400).json({ error: 'close_time must be after open_time' });
+
+    const span     = end - start;
+    const interval = loads_target === 1
+      ? span
+      : Math.max(minInt, Math.floor(span / (loads_target - 1)));
+
+    let deleted = 0, cleared = 0, inserted = 0, insertedW = 0;
 
     const tx = db.transaction(() => {
       // Save settings
@@ -247,51 +267,60 @@ app.post('/api/sites/:id/schedule', (req, res) => {
       `).run(site_id, date, loads_target, open_time, close_time, workins_per_hour);
 
       // Overwrite non-reserved slots for that date
-      db.prepare(`
+      const del = db.prepare(`
         DELETE FROM time_slots
         WHERE site_id=? AND date=? AND reserved_truck_id IS NULL
       `).run(site_id, date);
+      deleted = del.changes || 0;
 
       // Always clear holds for this date
-      db.prepare(`
+      const clr = db.prepare(`
         UPDATE time_slots
         SET hold_token=NULL, hold_expires_at=NULL
         WHERE site_id=? AND date=?
       `).run(site_id, date);
+      cleared = clr.changes || 0;
 
       // Insert regular slots
       const ins = db.prepare(`
         INSERT OR IGNORE INTO time_slots (site_id, date, slot_time, is_workin)
         VALUES (?, ?, ?, 0)
       `);
-      for (let i=0; i<loads_target; i++) {
-        const t = start + i*interval;
-        if (t>=start && t<=end) ins.run(site_id, date, toHHMM(t));
+
+      if (loads_target === 1) {
+        const r = ins.run(site_id, date, toHHMM(start));
+        inserted += r.changes || 0;
+      } else {
+        let t = start;
+        for (let i = 0; i < loads_target && t <= end; i++, t += interval) {
+          const r = ins.run(site_id, date, toHHMM(Math.min(t, end)));
+          inserted += r.changes || 0;
+        }
       }
 
       // Insert work-ins
-      if (workins_per_hour > 0) {
+      if (Number.isFinite(workins_per_hour) && workins_per_hour > 0) {
         const step = Math.max(1, Math.floor(60 / workins_per_hour));
         const insW = db.prepare(`
           INSERT OR IGNORE INTO time_slots (site_id, date, slot_time, is_workin)
           VALUES (?, ?, ?, 1)
         `);
-        for (let m=start; m<=end; m+=step) {
-          insW.run(site_id, date, toHHMM(m));
+        for (let m = start; m <= end; m += step) {
+          const r = insW.run(site_id, date, toHHMM(m));
+          insertedW += r.changes || 0;
         }
       }
     });
     tx();
 
-    res.json({ ok:true, interval_min: interval });
+    res.json({ ok:true, interval_min: interval, deleted, cleared_holds: cleared, inserted, inserted_workins: insertedW });
   } catch (e) {
-    console.error('/api/sites/:id/schedule', e);
-    res.status(500).json({ error:'server error' });
+    console.error('/api/sites/:id/schedule', e?.stack || e);
+    res.status(500).json({ error:'server error', error_detail: e?.message });
   }
 });
 
 // ------------------------- Facility Appointments (all slots) -----------------
-// GET /api/appointments?site_id=1&date=YYYY-MM-DD
 app.get('/api/appointments', (req, res) => {
   try {
     const site_id = parseInt(req.query.site_id, 10);
@@ -321,13 +350,12 @@ app.get('/api/appointments', (req, res) => {
 
     res.json({ ok:true, site_id, date, items: rows });
   } catch (e) {
-    console.error('/api/appointments', e);
-    res.status(500).json({ error:'server error' });
+    console.error('/api/appointments', e?.stack || e);
+    res.status(500).json({ error:'server error', error_detail: e?.message });
   }
 });
 
 // ------------------------- Driver (open) Slots -------------------------------
-// GET /api/sites/:id/slots?date=YYYY-MM-DD
 app.get('/api/sites/:id/slots', (req, res) => {
   try {
     expireHolds();
@@ -346,8 +374,8 @@ app.get('/api/sites/:id/slots', (req, res) => {
 
     res.json(rows.map(r => r.slot_time));
   } catch (e) {
-    console.error('/api/sites/:id/slots', e);
-    res.status(500).json({ error:'server error' });
+    console.error('/api/sites/:id/slots', e?.stack || e);
+    res.status(500).json({ error:'server error', error_detail: e?.message });
   }
 });
 
