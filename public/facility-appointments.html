@@ -5,109 +5,94 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Facility — Appointments</title>
   <style>
-    :root{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#222}
-    .wrap{max-width:1100px;margin:3vh auto;padding:0 1rem}
-    .toolbar{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-bottom:.75rem}
-    .input,.select,.button{padding:.5rem .6rem;border:1px solid #ccc;border-radius:10px}
-    .button{cursor:pointer}
-    table{width:100%;border-collapse:collapse}
-    th,td{padding:.55rem .6rem;border-bottom:1px solid #eee;text-align:left;font-size:.95rem}
-    .pill{padding:.15rem .45rem;border-radius:999px;border:1px solid #ddd;background:#f7f7f7;font-size:.8rem}
-    .muted{color:#666;font-size:.9rem;margin-top:.5rem}
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
+    .wrap { max-width: 1200px; margin: 4vh auto; padding: 0 16px; }
+    table { width:100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { padding: .55rem .6rem; border-bottom:1px solid #eee; text-align:left; }
+    .pill { padding:.15rem .5rem; border-radius:999px; font-size:.85rem; background:#f5f5f5; }
+    .pill.open { background:#eef7ff; }
+    .pill.reserved { background:#e8fff1; }
+    .hdr { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
+    select, input[type=date], button { padding:.45rem .6rem; border:1px solid #ccc; border-radius:10px; }
+    button { background:#f7f7f7; cursor:pointer; }
   </style>
 </head>
 <body>
 <div class="wrap">
   <h2>Cargill Soybean — Facility</h2>
-  <div class="toolbar">
-    <a class="button" href="index.html">Home</a>
-    <a class="button" href="timeslots-select.html">Driver Site</a>
-    <span style="margin-left:auto"></span>
-    <label>Site</label>
-    <select id="site" class="select">
-      <option value="1">East</option>
-      <option value="2">West</option>
-    </select>
-    <label>Date</label>
-    <input id="date" class="input" type="date"/>
-    <button id="refresh" class="button">Refresh</button>
+
+  <div class="hdr">
+    <label>Site
+      <select id="site">
+        <option value="1">East</option>
+        <option value="2">West</option>
+      </select>
+    </label>
+    <label>Date <input id="date" type="date"/></label>
+    <button id="refresh">Refresh</button>
   </div>
 
-  <table id="grid">
+  <table>
     <thead>
       <tr>
         <th>Time</th><th>Driver</th><th>Plate</th><th>Vendor</th><th>Farm/Ticket</th>
-        <th>Est. Amt</th><th>Unit</th><th>Phone</th><th>Probe Code</th><th>Status</th><th>Actions</th>
+        <th>Est. Amt</th><th>Unit</th><th>Phone</th><th>Probe Code</th><th>Status</th>
       </tr>
     </thead>
-    <tbody></tbody>
+    <tbody id="rows"><tr><td colspan="10">Loading…</td></tr></tbody>
   </table>
 
-  <div class="muted">* “Probe Code” is the 4‑digit confirmation used by the probe desk to match the driver to the load.</div>
+  <p style="color:#666; font-size:.9rem; margin-top:.5rem;">
+    * “Probe Code” is the 4‑digit confirmation used by the probe desk to match the driver to the load.
+  </p>
 </div>
 
 <script>
-(function(){
-  const $=s=>document.querySelector(s);
-  function today(){const d=new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10);}
-  $('#date').value = today();
+const $ = id => document.getElementById(id);
+const api = p => p;
 
-  async function load(){
-    const site_id = +$('#site').value;
-    const date    = $('#date').value;
-    const url = `/api/appointments?site_id=${site_id}&date=${encodeURIComponent(date)}`;
-    const tb = $('#grid tbody'); tb.innerHTML='';
-    try{
-      const r=await fetch(url); const j=await r.json();
-      if(!r.ok||j.error) throw new Error(j.error||r.statusText);
-      const items=j.items||[];
-      if(!items.length){ tb.innerHTML = `<tr><td colspan="11" class="muted">No appointments found.</td></tr>`; return; }
-      for(const it of items){
-        const tr=document.createElement('tr');
-        tr.innerHTML = `
-          <td>${it.slot_time}</td>
-          <td>${it.driver_name||'—'}</td>
-          <td>${it.license_plate||'—'}</td>
-          <td>${it.vendor_name||'—'}</td>
-          <td>${it.farm_or_ticket||'—'}</td>
-          <td>${it.est_amount??'—'}</td>
-          <td>${it.est_unit||'—'}</td>
-          <td>${it.driver_phone||'—'}</td>
-          <td>${it.queue_code||'—'}</td>
-          <td><span class="pill">${it.reservation_id? (it.status||'reserved') : 'open'}</span></td>
-          <td>
-            ${it.reservation_id ? `
-              <button class="button" data-act="reassign" data-id="${it.reservation_id}" data-time="${it.slot_time}">Reassign</button>
-              <button class="button" data-act="cancel" data-id="${it.reservation_id}">Cancel</button>
-            ` : `<span class="muted">—</span>`}
-          </td>
-        `;
-        tb.appendChild(tr);
-      }
-    }catch(e){
-      tb.innerHTML = `<tr><td colspan="11" style="color:#b00020">Load failed: ${e.message||e}</td></tr>`;
+async function load(){
+  const site_id = +$('site').value;
+  const date = $('date').value || new Date().toISOString().slice(0,10);
+  $('rows').innerHTML = `<tr><td colspan="10">Loading…</td></tr>`;
+  try{
+    const r = await fetch(api(`/api/appointments?site_id=${site_id}&date=${date}`));
+    const j = await r.json();
+    if(!r.ok || j.error) throw new Error(j.error||r.statusText);
+
+    if(!j.items || j.items.length===0){
+      $('rows').innerHTML=`<tr><td colspan="10">No slots for this day.</td></tr>`;
+      return;
     }
+
+    $('rows').innerHTML='';
+    for(const it of j.items){
+      const tr = document.createElement('tr');
+      const st = (it.status||'open').toLowerCase();
+      tr.innerHTML = `
+        <td>${it.slot_time}</td>
+        <td>${it.driver_name||'—'}</td>
+        <td>${it.license_plate||'—'}</td>
+        <td>${it.vendor_name||'—'}</td>
+        <td>${it.farm_or_ticket||'—'}</td>
+        <td>${it.est_amount??'—'}</td>
+        <td>${it.est_unit||'—'}</td>
+        <td>${it.driver_phone||'—'}</td>
+        <td>${it.queue_code||'—'}</td>
+        <td><span class="pill ${st}">${st}</span></td>
+      `;
+      $('rows').appendChild(tr);
+    }
+  }catch(e){
+    $('rows').innerHTML=`<tr><td colspan="10" style="color:#b00020;">Error: ${e.message}</td></tr>`;
   }
+}
 
-  $('#refresh').onclick=load; $('#site').onchange=load; $('#date').onchange=load;
-  load();
-
-  $('#grid').addEventListener('click', async (ev)=>{
-    const btn = ev.target.closest('button[data-act]');
-    if(!btn) return;
-    const act = btn.dataset.act;
-    const id  = +btn.dataset.id;
-    if(act==='cancel'){
-      const r = await fetch('/api/slots/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reservation_id:id})});
-      const j = await r.json(); alert(j.ok?`Cancelled. Probe Code ${j.queue_code||'—'}`: (j.error||'failed')); load();
-    } else if (act==='reassign'){
-      const to = prompt('Move to HH:MM (24h)?', btn.dataset.time);
-      if(!to) return;
-      const r = await fetch('/api/slots/reassign',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reservation_id:id,to_slot_time:to})});
-      const j = await r.json(); alert(j.ok?`Reassigned to ${to}. Probe Code ${j.queue_code||'—'}`: (j.error||'failed')); load();
-    }
-  });
-})();
+$('date').value = new Date().toISOString().slice(0,10);
+$('refresh').onclick = load;
+$('site').onchange = load;
+$('date').onchange = load;
+load();
 </script>
 </body>
 </html>
