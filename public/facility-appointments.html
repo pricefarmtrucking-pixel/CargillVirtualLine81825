@@ -264,12 +264,18 @@ function wireMassCancel() {
     const selected = getSelectedRows();
     if (!selected.length) { toast('Select at least one row.', false); return; }
 
-    const { site_id, date, reservation_ids } = gatherCancelTargets(selected);
-    if (!site_id || !date || !reservation_ids.length) {
-      toast('Nothing to cancel (select reserved rows).', false); return;
+    const { site_id, date, reservation_ids, slot_times } = gatherCancelTargets(selected);
+    if (!site_id || !date) { toast('Pick rows from one site/date.', false); return; }
+
+    if (!(reservation_ids.length || slot_times.length)) {
+      toast('Nothing to cancel. Select open and/or reserved rows.', false);
+      return;
     }
 
-    const ok = confirm(`Cancel ${reservation_ids.length} reservation(s) on ${date} (site ${site_id})? Drivers are not notified here.`);
+    const parts = [];
+    if (reservation_ids.length) parts.push(`${reservation_ids.length} reserved`);
+    if (slot_times.length) parts.push(`${slot_times.length} open`);
+    const ok = confirm(`Cancel ${parts.join(' + ')} slot(s) on ${date} (site ${site_id})? Drivers are not notified here.`);
     if (!ok) return;
 
     try {
@@ -277,14 +283,16 @@ function wireMassCancel() {
         method: 'POST',
         headers: { 'Content-Type':'application/json' },
         body: JSON.stringify({
-          site_id, date, reservation_ids,
-          notify: false,      // set true if you want SMS here also
-          reason: ''          // optional reason
+          site_id, date,
+          reservation_ids,
+          slot_times,
+          notify: false,   // set true if you also want SMS to reserved rows
+          reason: ''
         })
       });
       const j = await res.json();
       if (!res.ok || !j.ok) throw new Error(j.error || res.statusText);
-      toast(`Canceled ${j.canceled} reservation(s).`);
+      toast(`Canceled ${j.canceled} reservation(s), removed ${j.removed_open} open slot(s).`);
       setTimeout(loadAppointments, 350);
     } catch (e) {
       console.error(e);
