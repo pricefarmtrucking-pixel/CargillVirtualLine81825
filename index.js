@@ -561,6 +561,97 @@ app.get('/debug/env', (_req, res) => {
     hasTwilio: !!(TWILIO_SID && TWILIO_AUTH && TWILIO_FROM)
   });
 });
+// -------- BULK: text selected reservations ----------
+app.post('/api/slots/mass-notify', async (req, res) => {
+  try {
+    const { site_id, date, reservation_ids = [], message } = req.body || {};
+    if (!site_id || !date || !Array.isArray(reservation_ids) || !reservation_ids.length || !message) {
+      return res.status(400).json({ error: 'site_id, date, reservation_ids[], message required' });
+    }
+
+    // Pull only those that have a phone
+    const rows = db.prepare(`
+      SELECT id, driver_phone, slot_time
+      FROM slot_reservations
+      WHERE site_id=? AND date=? AND id IN (${reservation_ids.map(()=>'?').join(',')})
+    `).all(site_id, date, ...reservation_ids);
+
+    const targets = rows.filter(r => r.driver_phone);
+    let sent = 0;
+    for (const r of targets) {
+      const to = r.driver_phone;
+      const body = `Cargill (${site_id===1?'EAST':'WEST'} ${date} ${r.slot_time}): ${message}`;
+      try { await sendSMS(to, body); sent++; } catch { /* swallow per-message err */ }
+    }
+    res.json({ ok:true, targeted: targets.length, sent });
+  } catch (e) {
+    console.error('mass-notify', e);
+    res.status(500).json({ error:'server error' });
+  }
+});
+
+// -------- BULK: cancel selected reservations ----------
+app.post('/api/slots/mass-cancel', async (req, res) => {
+  try {
+    const { site_id, date, reservation_ids = [], reason, notify=false } = req.body || {};
+    if (!site_id || !date || !Array.isArray(reservation_ids) || !reservation_ids.length) {
+      return res.status(400).json({ error: 'site_id, date, reservation_ids[] required' });
+    }
+
+    const rows = db.prepare(`
+      SELECT * FROM slot_reservations
+      WHERE site_id=? AND date=? AND id IN (${reservation_ids.map(()=>'?').join(',')})
+    `).all(site_id, date, ...reservation_ids);
+
+    const tx = db.transaction(() => {
+      for (const r of rows) {
+        db.prepare(`
+          UPDATE time_slots
+          SET reserved_truck_id=NULL, reserved_at=NULL
+          WHERE site_id=? AND date=? AND slot_time=? AND reserved_truck_id=?
+        `).run(site_id, date, r.slot_time, r.id);
+        db.prepare(`DELETE FROM slot_reservations WHERE id=?`).run(r.id);
+      }
+    });
+    tx();
+
+    if (notify) {
+      for (const r of rows) {
+        if (!r.driver_phone) continue;
+        try {
+          await sendSMS(
+            r.driver_phone,
+            `Cargill: Your ${date} ${r.slot_time} (${site_id===1?'EAST':'WEST'}) was cancelled${reason?`: ${reason}`:''}.`
+          );
+        } catch { /* ignore individual send failures */ }
+      }
+    }
+
+    res.json({ ok:true, canceled: rows.length });
+  } catch (e) {
+    console.error('mass-cancel', e);
+    res.status(500).json({ error:'server error' });
+  }
+});
+
+// -------- OPTIONAL: hide open (unreserved) slots in bulk ----------
+app.post('/api/slots/hide-open', (req, res) => {
+  try {
+    const { site_id, date, slot_times = [] } = req.body || {};
+    if (!site_id || !date || !Array.isArray(slot_times) || !slot_times.length) {
+      return res.status(400).json({ error: 'site_id, date, slot_times[] required' });
+    }
+    const del = db.prepare(`
+      DELETE FROM time_slots
+      WHERE site_id=? AND date=? AND slot_time IN (${slot_times.map(()=>'?').join(',')})
+        AND reserved_truck_id IS NULL
+    `).run(site_id, date, ...slot_times);
+    res.json({ ok:true, removed: del.changes });
+  } catch (e) {
+    console.error('hide-open', e);
+    res.status(500).json({ error:'server error' });
+  }
+});
 
 // ------------------------- Start ---------------------------------------------
 app.listen(PORT, () => {
