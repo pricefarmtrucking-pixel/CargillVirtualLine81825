@@ -6,64 +6,92 @@
   <title>Choose a Time — Cargill Soybean</title>
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
-    .container { max-width: 1100px; margin: 5vh auto; padding: 0 1rem; }
-    .slotgrid { display:grid; grid-template-columns: repeat(auto-fill, minmax(140px,1fr)); gap:.5rem; }
-    .slot { border:1px solid #ddd; border-radius:999px; padding:.5rem .7rem; text-align:center; cursor:pointer; }
-    .row { display:flex; gap:.5rem; align-items:center; }
-    .button { padding:.5rem .9rem; border:1px solid #ddd; border-radius:10px; background:#f7f7f7; cursor:pointer; }
-    .button.primary { background:#1e90ff; color:#fff; border-color:#1e90ff; }
-    input, select { padding:.5rem .6rem; border:1px solid #ccc; border-radius:8px; }
+    .wrap { max-width: 900px; margin: 4vh auto; padding: 0 16px; }
+    .hdr { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
+    select, input[type=date], button { padding:.45rem .6rem; border:1px solid #ccc; border-radius:10px; }
+    .grid { margin-top:1rem; display:grid; grid-template-columns: repeat(4, 1fr); gap:.6rem; }
+    .slot { padding:.75rem; border:1px solid #e5e5e5; border-radius:12px; text-align:center; background:#fff; cursor:pointer; }
+    .slot:hover { outline: 2px solid #1e90ff22; }
+    .note { color:#666; margin-top:.5rem; }
   </style>
 </head>
 <body>
-<div class="container">
+<div class="wrap">
   <h2>Choose a Time</h2>
-  <div class="row" style="margin-bottom:.75rem;">
-    <label>Site</label>
-    <select id="site">
-      <option value="1">EAST (1)</option>
-      <option value="2">WEST (2)</option>
-    </select>
-    <label>Date</label>
-    <input type="date" id="date"/>
-    <button class="button" onclick="loadSlots()">Refresh</button>
+
+  <div class="hdr">
+    <label>Site
+      <select id="site">
+        <option value="1">EAST (1)</option>
+        <option value="2">WEST (2)</option>
+      </select>
+    </label>
+    <label>Date <input id="date" type="date"/></label>
+    <button id="refresh">Refresh</button>
   </div>
-  <div id="msg" style="margin:.25rem 0; color:#0a7a28;"></div>
-  <div class="slotgrid" id="grid"></div>
+
+  <div id="grid" class="grid"></div>
+  <div id="msg" class="note"></div>
 </div>
+
 <script>
-function today(){ const d=new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10); }
-document.getElementById('date').value = today();
+const $=id=>document.getElementById(id);
+const api=p=>p;
 
-async function loadSlots(){
-  const site = document.getElementById('site').value;
-  const date = document.getElementById('date').value;
-  const grid = document.getElementById('grid');
-  grid.innerHTML = 'Loading…';
-  const r = await fetch(`/api/sites/${site}/slots?date=${date}`);
-  const list = await r.json();
-  grid.innerHTML='';
-  if (!Array.isArray(list) || list.length===0){ grid.textContent='No open slots'; return; }
-  list.forEach(t => {
-    const b = document.createElement('button');
-    b.className='slot'; b.textContent=t;
-    b.onclick=()=>hold(site,date,t);
-    grid.appendChild(b);
-  });
+async function load(){
+  const site = +$('site').value;
+  const date = $('date').value || new Date().toISOString().slice(0,10);
+  $('grid').innerHTML='Loading…';
+  const r = await fetch(api(`/api/sites/${site}/slots?date=${date}`));
+  const slots = await r.json().catch(()=>[]);
+  $('grid').innerHTML='';
+  if(!Array.isArray(slots) || slots.length===0){
+    $('grid').textContent='No open times.';
+    return;
+  }
+  for(const t of slots){
+    const div=document.createElement('div');
+    div.className='slot'; div.textContent=t;
+    div.onclick=()=>reserve(site, date, t);
+    $('grid').appendChild(div);
+  }
+  $('msg').textContent = `${slots.length} open times`;
 }
 
-async function hold(site_id,date,slot_time){
-  const r = await fetch('/api/slots/hold',{
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ site_id:Number(site_id), date, slot_time })
-  });
-  const j = await r.json();
-  if (!r.ok || j.error){ alert('Hold failed: '+(j.error||r.statusText)); return; }
-  const q = new URLSearchParams({ token:j.hold_token, site_id, date, slot_time });
-  location.href = 'timeslots-driver.html?'+q.toString();
+async function reserve(site_id, date, slot_time){
+  // Simple 2-step: hold then confirm (demo; collect more fields as needed)
+  try{
+    const h = await fetch(api('/api/slots/hold'),{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ site_id, date, slot_time })
+    }).then(r=>r.json());
+    if(!h.hold_token) throw new Error(h.error||'hold failed');
+
+    const body = {
+      hold_token: h.hold_token, site_id, date, slot_time,
+      driver_name: prompt('Driver name?') || '',
+      license_plate: prompt('Plate?') || '',
+      vendor_name: prompt('Vendor?') || '',
+      farm_or_ticket: prompt('Farm/Ticket?') || '',
+      est_amount: Number(prompt('Estimated amount?')||'') || null,
+      est_unit: 'BUSHELS',
+      driver_phone: prompt('Mobile for confirmation (10 digits)?') || ''
+    }
+    const c = await fetch(api('/api/slots/confirm'),{
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    }).then(r=>r.json());
+
+    if(!c.ok) throw new Error(c.error||'confirm failed');
+    alert(`Reserved! Probe code: ${c.queue_code}`);
+    load();
+  }catch(e){ alert('Error: '+e.message); }
 }
 
-loadSlots();
+$('date').value = new Date().toISOString().slice(0,10);
+$('refresh').onclick = load;
+$('site').onchange = load;
+$('date').onchange = load;
+load();
 </script>
 </body>
 </html>
