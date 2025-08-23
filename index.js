@@ -552,78 +552,82 @@ app.post('/api/slots/reassign', (req, res) => {
 
   res.json({ ok:true, reservation_id, to_slot_time, queue_code: r.queue_code });
 });
-// ------------------------- Mass Cancel / Mass Notify -------------------------
-// POST /api/slots/mass-cancel
+// ------------------------- Mass Cancel (reserved + open) ---------------------
 // Body:
 // {
-//   "site_id": 1,
-//   "date": "2025-08-23",
-//   "reservation_ids": [12, 15],        // optional
-//   "slot_times": ["07:00","07:14"],    // optional (HH:MM)
-//   "notify": true,                      // optional (default: false)
-//   "reason": "Weather delay"            // optional
+//   site_id: 1,
+//   date: "2025-08-23",
+//   reservation_ids: [12,15],          // optional - cancels these reservations
+//   slot_times: ["07:00","07:14"],     // optional - removes OPEN slots at these times
+//   notify: true,                      // optional - SMS drivers of cancelled reservations
+//   reason: "Weather delay"            // optional
 // }
 app.post('/api/slots/mass-cancel', async (req, res) => {
   try {
     const { site_id, date, reservation_ids = [], slot_times = [], notify = false, reason = '' } = req.body || {};
     if (!site_id || !date) return res.status(400).json({ error: 'site_id and date required' });
 
-    // Resolve any slot_times to reservation ids (only those actually reserved)
-    let ids = Array.isArray(reservation_ids) ? [...reservation_ids] : [];
-    if (Array.isArray(slot_times) && slot_times.length) {
-      const rows = db.prepare(`
-        SELECT r.id
-        FROM slot_reservations r
-        WHERE r.site_id=? AND r.date=? AND r.slot_time IN (${slot_times.map(()=>'?').join(',')})
-      `).all(site_id, date, ...slot_times);
-      ids.push(...rows.map(r => r.id));
-    }
-
-    // De‑dup and filter non-numeric
-    ids = [...new Set(ids)].filter(x => Number.isInteger(x));
-
-    if (ids.length === 0) {
-      return res.json({ ok: true, canceled: 0, notified: 0, details: [] });
-    }
-
-    const getById   = db.prepare(`SELECT * FROM slot_reservations WHERE id=?`);
-    const freeSlot  = db.prepare(`
+    // ——— Prep statements
+    const getResById = db.prepare(`SELECT * FROM slot_reservations WHERE id=?`);
+    const freeSlot   = db.prepare(`
       UPDATE time_slots
          SET reserved_truck_id=NULL, reserved_at=NULL
        WHERE site_id=? AND date=? AND slot_time=? AND reserved_truck_id=?`);
-    const delRes    = db.prepare(`DELETE FROM slot_reservations WHERE id=?`);
+    const delRes     = db.prepare(`DELETE FROM slot_reservations WHERE id=?`);
+    const delOpen    = db.prepare(`
+      DELETE FROM time_slots
+       WHERE site_id=? AND date=? AND slot_time=? AND reserved_truck_id IS NULL
+    `);
 
-    const affected = [];
-    const phones   = [];
+    const affectedReservations = [];
+    const removedOpenSlots     = [];
+    const phones = [];
 
+    // ——— Do all changes in a transaction
     const tx = db.transaction(() => {
-      for (const id of ids) {
-        const r = getById.get(id);
-        if (!r) continue; // already gone / bad id
+      // 1) Cancel specific reservations (if any)
+      for (const id of (Array.isArray(reservation_ids)?reservation_ids:[])) {
+        if (!Number.isInteger(id)) continue;
+        const r = getResById.get(id);
+        if (!r) continue;
 
-        // free the slot
+        // free slot + delete reservation
         freeSlot.run(r.site_id, r.date, r.slot_time, r.id);
-        // delete reservation
         delRes.run(id);
 
-        affected.push({ id, site_id: r.site_id, date: r.date, slot_time: r.slot_time, driver_phone: r.driver_phone || null });
+        affectedReservations.push({ id, site_id: r.site_id, date: r.date, slot_time: r.slot_time, driver_phone: r.driver_phone || null });
         if (notify && r.driver_phone) phones.push(r.driver_phone);
+      }
+
+      // 2) Remove OPEN slots by slot_times (if any)
+      if (Array.isArray(slot_times) && slot_times.length) {
+        for (const t of slot_times) {
+          const info = delOpen.run(site_id, date, t);
+          if (info.changes > 0) removedOpenSlots.push({ site_id, date, slot_time: t });
+        }
       }
     });
     tx();
 
+    // ——— Optional SMS for cancelled reservations only
     let notified = 0;
     if (notify && phones.length) {
       const msg = `Cargill: Appointment${phones.length>1?'s':''} on ${date} (${site_id===1?'EAST':'WEST'}) cancelled${reason?`: ${reason}`:''}.`;
       for (const to of phones) {
         try {
-          const resSMS = await sendSMS(to, msg);
-          if (resSMS.sent) notified++;
-        } catch (_) { /* continue */ }
+          const s = await sendSMS(to, msg);
+          if (s.sent) notified++;
+        } catch (_) {}
       }
     }
 
-    return res.json({ ok: true, canceled: affected.length, notified, details: affected });
+    return res.json({
+      ok: true,
+      canceled: affectedReservations.length,
+      removed_open: removedOpenSlots.length,
+      notified,
+      details: { reservations: affectedReservations, open_slots: removedOpenSlots }
+    });
   } catch (e) {
     console.error('SQL error in /api/slots/mass-cancel:', e);
     return res.status(500).json({ error: 'server error' });
