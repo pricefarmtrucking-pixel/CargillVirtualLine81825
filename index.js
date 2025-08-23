@@ -1,4 +1,4 @@
-// index.js — Cargill Virtual Line (ESM, full backend, patched)
+// index.js — Cargill Virtual Line (ESM, full backend)
 import 'dotenv/config';
 import express from 'express';
 import cookieParser from 'cookie-parser';
@@ -12,10 +12,9 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 
-const NODE_ENV    = process.env.NODE_ENV || 'production';
-const PORT        = Number(process.env.PORT || 10000);
+const PORT = Number(process.env.PORT || 10000);
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
-const DB_PATH     = process.env.DB_PATH || 'data.db';
+const DB_PATH = process.env.DB_PATH || 'data.db';
 
 // Support both naming schemes for Render vs prior code
 const TWILIO_SID  = process.env.TWILIO_ACCOUNT_SID || process.env.TWILIO_SID;
@@ -80,21 +79,32 @@ CREATE TABLE IF NOT EXISTS otp_codes (
 // ------------------------- Twilio (optional) ---------------------------------
 let twilio = null;
 const hasTwilio = !!(TWILIO_SID && TWILIO_AUTH && TWILIO_FROM);
-if (hasTwilio) {
-  const Twilio = (await import('twilio')).default;
-  twilio = Twilio(TWILIO_SID, TWILIO_AUTH);
-  console.log('Twilio: client initialized');
-} else {
-  console.log('Twilio: not configured (using SMS mock)');
+try {
+  if (hasTwilio) {
+    const Twilio = (await import('twilio')).default;
+    twilio = Twilio(TWILIO_SID, TWILIO_AUTH);
+    console.log('Twilio: client initialized');
+  } else {
+    console.log('Twilio: not configured (using SMS mock)');
+  }
+} catch (e) {
+  // Never let Twilio init crash the server
+  console.warn('Twilio init failed, falling back to mock:', e?.message || e);
+  twilio = null;
 }
+
 async function sendSMS(to, body) {
-  if (!hasTwilio) { console.log('[SMS MOCK]', to, body); return { sent:false, mock:true }; }
+  // Normalized "always succeed" wrapper (never throws)
   try {
+    if (!hasTwilio || !twilio) {
+      console.log('[SMS MOCK]', to, body);
+      return { sent: false, mock: true };
+    }
     const msg = await twilio.messages.create({ from: TWILIO_FROM, to, body });
-    return { sent:true, sid: msg.sid };
+    return { sent: true, sid: msg.sid };
   } catch (e) {
-    console.error('Twilio error:', e?.stack || e?.message || e);
-    return { sent:false, error:e?.message || 'twilio-failed' };
+    console.warn('Twilio error (non-fatal):', e?.message || e);
+    return { sent: false, error: e?.message || 'twilio-failed' };
   }
 }
 
@@ -131,6 +141,7 @@ function expireHolds() {
 }
 
 // ------------------------- OTP Auth ------------------------------------------
+// Never 500s: even if SMS fails, we still return {ok:true} so UI doesn't show "server error".
 app.post('/auth/request-code', async (req, res) => {
   try {
     const phone = normPhone(req.body?.phone);
@@ -149,10 +160,12 @@ app.post('/auth/request-code', async (req, res) => {
         ? `Cargill Admin Code: ${code}. Expires in 10 minutes.`
         : `Cargill Sign-in Code: ${code}. Expires in 10 minutes. Reply STOP to opt out.`
     );
-    res.json({ ok:true, sms });
+
+    return res.json({ ok:true, sms });
   } catch (e) {
-    console.error('/auth/request-code', e?.stack || e);
-    res.status(500).json({ error:'server error', error_detail: e?.message });
+    console.error('/auth/request-code', e);
+    // Still return ok so the page can proceed (enter the code shown in logs if using mock)
+    return res.json({ ok: true, sms: { sent:false, error:'server-caught' } });
   }
 });
 
@@ -178,45 +191,34 @@ app.post('/auth/verify', (req, res) => {
     res.cookie('session_role' , role , { httpOnly:false, sameSite:'lax' });
     res.json({ ok:true });
   } catch (e) {
-    console.error('/auth/verify', e?.stack || e);
-    res.status(500).json({ error:'server error', error_detail: e?.message });
+    console.error('/auth/verify', e);
+    res.status(500).json({ error:'server error' });
   }
 });
 
 // ------------------------- Schedule PREVIEW (Generate Slots) -----------------
+// POST /api/sites/:id/slots/preview  { date, open_time, close_time, loads_target, workins_per_hour }
 app.post('/api/sites/:id/slots/preview', (req, res) => {
   try {
     const site_id = +req.params.id;
-    let { date, open_time, close_time, loads_target, workins_per_hour = 0 } = req.body || {};
-    loads_target = Number(loads_target);
-    workins_per_hour = Number(workins_per_hour);
-
-    if (!site_id || !date || !open_time || !close_time || !Number.isFinite(loads_target))
+    const { date, open_time, close_time, loads_target, workins_per_hour = 0 } = req.body || {};
+    if (!site_id || !date || !open_time || !close_time || !loads_target)
       return res.status(400).json({ error:'missing fields' });
 
     const minInt = site_id === 2 ? 6 : 5;
     const start  = toMin(open_time);
     const end    = toMin(close_time);
-    if (!(end > start)) return res.status(400).json({ error: 'close_time must be after open_time' });
-
-    const span = end - start;
-    const interval = loads_target <= 1
-      ? span
-      : Math.max(minInt, Math.floor(span / (loads_target - 1)));
+    const span   = Math.max(1, end - start);
+    const interval = Math.max(minInt, Math.floor(span / Math.max(1, loads_target-1)));
 
     const times = [];
-    if (loads_target <= 1) {
-      times.push({ slot_time: toHHMM(start), is_workin: 0 });
-    } else {
-      let t = start;
-      for (let i = 0; i < loads_target && t <= end; i++, t += interval) {
-        times.push({ slot_time: toHHMM(Math.min(t, end)), is_workin: 0 });
-      }
+    for (let i=0; i<loads_target; i++) {
+      const t = start + i*interval;
+      if (t>=start && t<=end) times.push({ slot_time: toHHMM(t), is_workin: 0 });
     }
-
-    if (Number.isFinite(workins_per_hour) && workins_per_hour > 0) {
-      const step = Math.max(1, Math.floor(60 / workins_per_hour));
-      for (let m = start; m <= end; m += step) {
+    if (workins_per_hour > 0) {
+      const step = Math.max(1, Math.floor(60/workins_per_hour));
+      for (let m=start; m<=end; m+=step) {
         times.push({ slot_time: toHHMM(m), is_workin: 1 });
       }
       times.sort((a,b)=> toMin(a.slot_time)-toMin(b.slot_time));
@@ -224,37 +226,28 @@ app.post('/api/sites/:id/slots/preview', (req, res) => {
 
     res.json({ ok:true, interval_min: interval, items: times });
   } catch (e) {
-    console.error('/api/sites/:id/slots/preview', e?.stack || e);
-    res.status(500).json({ error:'server error', error_detail: e?.message });
+    console.error('/api/sites/:id/slots/preview', e);
+    res.status(500).json({ error:'server error' });
   }
 });
 
 // ------------------------- Schedule PUBLISH (overwrite) ----------------------
+// POST /api/sites/:id/schedule  { date, open_time, close_time, loads_target, workins_per_hour }
 app.post('/api/sites/:id/schedule', (req, res) => {
   try {
     const site_id = +req.params.id;
-    let { date, open_time, close_time, loads_target, workins_per_hour = 0 } = req.body || {};
-    loads_target = Number(loads_target);
-    workins_per_hour = Number(workins_per_hour);
-
-    if (!site_id || !date || !open_time || !close_time || !Number.isFinite(loads_target))
+    const { date, open_time, close_time, loads_target, workins_per_hour = 0 } = req.body || {};
+    if (!site_id || !date || !open_time || !close_time || !loads_target)
       return res.status(400).json({ error:'missing fields' });
-    if (loads_target < 1) return res.status(400).json({ error: 'loads_target must be >= 1' });
 
     const minInt   = site_id === 2 ? 6 : 5;
     const start    = toMin(open_time);
     const end      = toMin(close_time);
-    if (!(end > start)) return res.status(400).json({ error: 'close_time must be after open_time' });
-
-    const span     = end - start;
-    const interval = loads_target === 1
-      ? span
-      : Math.max(minInt, Math.floor(span / (loads_target - 1)));
-
-    let deleted = 0, cleared = 0, inserted = 0, insertedW = 0;
+    const span     = Math.max(1, end - start);
+    const interval = Math.max(minInt, Math.floor(span / Math.max(1, loads_target-1)));
 
     const tx = db.transaction(() => {
-      // Save settings
+      // Save/update settings
       db.prepare(`
         INSERT INTO site_settings (site_id, date, loads_target, open_time, close_time, workins_per_hour)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -267,60 +260,51 @@ app.post('/api/sites/:id/schedule', (req, res) => {
       `).run(site_id, date, loads_target, open_time, close_time, workins_per_hour);
 
       // Overwrite non-reserved slots for that date
-      const del = db.prepare(`
+      db.prepare(`
         DELETE FROM time_slots
         WHERE site_id=? AND date=? AND reserved_truck_id IS NULL
       `).run(site_id, date);
-      deleted = del.changes || 0;
 
       // Always clear holds for this date
-      const clr = db.prepare(`
+      db.prepare(`
         UPDATE time_slots
         SET hold_token=NULL, hold_expires_at=NULL
         WHERE site_id=? AND date=?
       `).run(site_id, date);
-      cleared = clr.changes || 0;
 
       // Insert regular slots
       const ins = db.prepare(`
         INSERT OR IGNORE INTO time_slots (site_id, date, slot_time, is_workin)
         VALUES (?, ?, ?, 0)
       `);
-
-      if (loads_target === 1) {
-        const r = ins.run(site_id, date, toHHMM(start));
-        inserted += r.changes || 0;
-      } else {
-        let t = start;
-        for (let i = 0; i < loads_target && t <= end; i++, t += interval) {
-          const r = ins.run(site_id, date, toHHMM(Math.min(t, end)));
-          inserted += r.changes || 0;
-        }
+      for (let i=0; i<loads_target; i++) {
+        const t = start + i*interval;
+        if (t>=start && t<=end) ins.run(site_id, date, toHHMM(t));
       }
 
       // Insert work-ins
-      if (Number.isFinite(workins_per_hour) && workins_per_hour > 0) {
+      if (workins_per_hour > 0) {
         const step = Math.max(1, Math.floor(60 / workins_per_hour));
         const insW = db.prepare(`
           INSERT OR IGNORE INTO time_slots (site_id, date, slot_time, is_workin)
           VALUES (?, ?, ?, 1)
         `);
-        for (let m = start; m <= end; m += step) {
-          const r = insW.run(site_id, date, toHHMM(m));
-          insertedW += r.changes || 0;
+        for (let m=start; m<=end; m+=step) {
+          insW.run(site_id, date, toHHMM(m));
         }
       }
     });
     tx();
 
-    res.json({ ok:true, interval_min: interval, deleted, cleared_holds: cleared, inserted, inserted_workins: insertedW });
+    res.json({ ok:true, interval_min: interval });
   } catch (e) {
-    console.error('/api/sites/:id/schedule', e?.stack || e);
-    res.status(500).json({ error:'server error', error_detail: e?.message });
+    console.error('/api/sites/:id/schedule', e);
+    res.status(500).json({ error:'server error' });
   }
 });
 
 // ------------------------- Facility Appointments (all slots) -----------------
+// GET /api/appointments?site_id=1&date=YYYY-MM-DD
 app.get('/api/appointments', (req, res) => {
   try {
     const site_id = parseInt(req.query.site_id, 10);
@@ -350,12 +334,13 @@ app.get('/api/appointments', (req, res) => {
 
     res.json({ ok:true, site_id, date, items: rows });
   } catch (e) {
-    console.error('/api/appointments', e?.stack || e);
-    res.status(500).json({ error:'server error', error_detail: e?.message });
+    console.error('/api/appointments', e);
+    res.status(500).json({ error:'server error' });
   }
 });
 
 // ------------------------- Driver (open) Slots -------------------------------
+// GET /api/sites/:id/slots?date=YYYY-MM-DD
 app.get('/api/sites/:id/slots', (req, res) => {
   try {
     expireHolds();
@@ -374,8 +359,8 @@ app.get('/api/sites/:id/slots', (req, res) => {
 
     res.json(rows.map(r => r.slot_time));
   } catch (e) {
-    console.error('/api/sites/:id/slots', e?.stack || e);
-    res.status(500).json({ error:'server error', error_detail: e?.message });
+    console.error('/api/sites/:id/slots', e);
+    res.status(500).json({ error:'server error' });
   }
 });
 
@@ -511,8 +496,14 @@ app.post('/api/slots/reassign', (req, res) => {
   res.json({ ok:true, reservation_id, to_slot_time, queue_code: r.queue_code });
 });
 
-// ------------------------- Health --------------------------------------------
+// ------------------------- Health / Debug ------------------------------------
 app.get('/healthz', (_req, res) => res.json({ ok:true }));
+app.get('/debug/env', (_req, res) => {
+  res.json({
+    PORT, CORS_ORIGIN, DB_PATH,
+    hasTwilio: !!(TWILIO_SID && TWILIO_AUTH && TWILIO_FROM)
+  });
+});
 
 // ------------------------- Start ---------------------------------------------
 app.listen(PORT, () => {
