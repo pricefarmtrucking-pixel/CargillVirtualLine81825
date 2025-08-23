@@ -6,160 +6,101 @@
   <title>Facility — Schedule Builder</title>
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
-    .wrap { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
-    h1 { font-size: 22px; margin: 0 0 14px; }
-    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-    label { font-size: 12px; color:#555; display:block; margin-bottom: 4px; }
-    .field { min-width: 140px; }
-    input, select, button { height: 34px; padding: 0 10px; border:1px solid #ccc; border-radius:8px; }
-    button { cursor: pointer; }
-    .btn { padding: 8px 12px; border-radius:10px; border: 1px solid #ccd; background:#f7f7f9; }
-    .btn.primary { background:#1e90ff; color:#fff; border-color:#1e90ff; }
-    .muted { color:#777; font-size: 13px; margin-top: 6px; }
-    .status { margin: 8px 0; min-height: 20px; font-size: 14px; }
-    .ok { color:#0a7a28; } .err { color:#b00020; }
-    /* preview grid */
-    .grid { display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; margin-top:14px; }
-    .slot { border:1px solid #e5e5e5; border-radius:10px; padding:10px; text-align:center; background:#fff; box-shadow:0 1px 6px rgba(0,0,0,.03); }
-    .toolbar { display:flex; gap:8px; align-items:center; margin-top:10px; }
+    .wrap { max-width: 1100px; margin: 4vh auto; padding: 0 16px; }
+    .row { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
+    input, select { padding:.5rem .6rem; border:1px solid #ccc; border-radius:10px; }
+    button { padding:.55rem .9rem; border:1px solid #ccc; background:#f7f7f7; border-radius:10px; cursor:pointer; }
+    button.primary { background:#1e90ff; color:#fff; border-color:#1e90ff; }
+    .note { color:#666; margin-top:.5rem; }
+    .ok { color:#0a7a28; }
+    .err{ color:#b00020; }
+    .grid { margin-top:1rem; display:grid; grid-template-columns: repeat(4, 1fr); gap:.5rem; }
+    .slot { padding:.6rem; border:1px solid #e5e5e5; border-radius:10px; text-align:center; background:#fff; }
   </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Cargill Soybean — Facility</h1>
+  <h2>Cargill Soybean — Facility</h2>
 
   <div class="row">
-    <div class="field">
-      <label>Site</label>
+    <label>Site
       <select id="site">
-        <option value="1">East</option>
-        <option value="2">West</option>
+        <option value="1">East (1)</option>
+        <option value="2">West (2)</option>
       </select>
-    </div>
-    <div class="field">
-      <label>Date</label>
-      <input id="date" type="date"/>
-    </div>
-    <div class="field">
-      <label>Open</label>
-      <input id="open" type="time" value="07:00" step="60"/>
-    </div>
-    <div class="field">
-      <label>Close</label>
-      <input id="close" type="time" value="17:00" step="60"/>
-    </div>
-    <div class="field">
-      <label>Loads/day</label>
-      <input id="loads" type="number" value="100" min="1" step="1"/>
-    </div>
-    <div class="field">
-      <label>Work-ins/hr (optional)</label>
-      <input id="workins" type="number" value="0" min="0" step="1"/>
-    </div>
+    </label>
+    <label>Date <input id="date" type="date"/></label>
+    <label>Open <input id="open" type="time" value="07:00"/></label>
+    <label>Close <input id="close" type="time" value="17:00"/></label>
+    <label>Loads/day <input id="loads" type="number" value="100" min="1"/></label>
+    <label>Work-ins/hr <input id="workins" type="number" value="0" min="0"/></label>
 
-    <div class="toolbar">
-      <button id="btnGen" class="btn">Generate Slots</button>
-      <button id="btnPub" class="btn primary">Publish Schedule</button>
-    </div>
+    <button id="btnPreview">Generate Slots</button>
+    <button id="btnPublish" class="primary">Publish Schedule</button>
   </div>
 
-  <div class="muted">Minimum interval is auto‑computed (East≈5m, West≈6m). “Publish” seeds slots to the database.</div>
-  <div id="status" class="status"></div>
-
+  <div id="msg" class="note"></div>
   <div id="grid" class="grid"></div>
 </div>
 
 <script>
-(function(){
-  const $ = id => document.getElementById(id);
-  const siteSel = $('site'), dateInp = $('date'), openInp = $('open'), closeInp = $('close'),
-        loadsInp = $('loads'), workInsInp = $('workins'), grid = $('grid'), status = $('status');
+const $ = id => document.getElementById(id);
+const api = path => path;
 
-  // default date = today (local)
-  const todayLocal = () => {
-    const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-    return d.toISOString().slice(0,10);
+function toMin(hhmm){const [h,m]=hhmm.split(':').map(Number);return h*60+m;}
+function toHHMM(min){const h=String(Math.floor(min/60)).padStart(2,'0');const m=String(min%60).padStart(2,'0');return `${h}:${m}`;}
+
+function preview(){
+  const site = +$('site').value;
+  const date = $('date').value || new Date().toISOString().slice(0,10);
+  const open = $('open').value, close = $('close').value;
+  const loads = +$('loads').value;
+  const minInt = site===2?6:5;
+  const start = toMin(open), end=toMin(close);
+  const span=end-start;
+  const interval=Math.max(minInt, Math.floor(span/Math.max(1,loads-1)));
+
+  $('grid').innerHTML='';
+  for(let i=0;i<loads;i++){
+    const t=start+i*interval;
+    if(t>=start && t<=end){
+      const div=document.createElement('div');
+      div.className='slot';
+      div.textContent=toHHMM(t);
+      $('grid').appendChild(div);
+    }
+  }
+  $('msg').textContent = `Preview: ${$('grid').children.length} slots @ ~${interval} min interval (E:${site===2?6:5} min minimum).`;
+}
+
+async function publish(){
+  const body = {
+    date: $('date').value || new Date().toISOString().slice(0,10),
+    open_time: $('open').value,
+    close_time: $('close').value,
+    loads_target: +$('loads').value,
+    workins_per_hour: +$('workins').value
   };
-  dateInp.value = todayLocal();
+  const site = +$('site').value;
 
-  const toMin = t => { const [h,m] = String(t).split(':').map(x=>parseInt(x,10)); return h*60+m; };
-  const toHHMM = mins => String(Math.floor(mins/60)).padStart(2,'0')+':'+String(mins%60).padStart(2,'0');
-
-  function setMsg(txt, ok=false) {
-    status.textContent = txt||'';
-    status.className = 'status '+(ok?'ok':'err');
+  $('msg').className='note'; $('msg').textContent='Publishing…';
+  const r = await fetch(api(`/api/sites/${site}/schedule`),{
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
+  });
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok || j.error){
+    $('msg').className='note err';
+    $('msg').textContent = 'Error: '+(j.error||r.statusText);
+    return;
   }
+  $('msg').className='note ok';
+  $('msg').textContent = `Published. Interval ≈ ${j.interval_min} min. Previous open slots overwritten for that day.`;
+}
 
-  function computePreview() {
-    grid.innerHTML = '';
-    setMsg('', true);
-
-    const siteId = parseInt(siteSel.value,10);
-    const start = toMin(openInp.value || '07:00');
-    const end   = toMin(closeInp.value || '17:00');
-    const loads = Math.max(1, parseInt(loadsInp.value||'0',10));
-    if (end <= start) { setMsg('Close must be after Open'); return; }
-
-    const minInterval = (siteId === 2) ? 6 : 5;
-    const span = end - start;
-    const interval = (loads > 1) ? Math.max(minInterval, Math.floor(span/(loads-1))) : 0;
-
-    // create preview items (loads) across 4 columns
-    const times = [];
-    if (loads >= 1) {
-      for (let i=0;i<loads;i++) {
-        const t = start + i*interval;
-        if (t<=end) times.push(toHHMM(t));
-      }
-    }
-    // render
-    for (const tm of times) {
-      const div = document.createElement('div');
-      div.className = 'slot';
-      div.textContent = tm;
-      grid.appendChild(div);
-    }
-    setMsg(`Generated ${times.length} slots. Computed interval ≈ ${interval} min.`, true);
-  }
-
-  async function publishSchedule(){
-    setMsg('');
-    const body = {
-      date: dateInp.value,
-      open_time: openInp.value,
-      close_time: closeInp.value,
-      loads_target: parseInt(loadsInp.value||'0',10),
-      workins_per_hour: parseInt(workInsInp.value||'0',10)
-    };
-    const siteId = parseInt(siteSel.value,10);
-
-    // quick validations
-    if (!body.date || !body.open_time || !body.close_time || !body.loads_target) {
-      setMsg('Missing required fields.'); return;
-    }
-
-    try{
-      const r = await fetch(`/api/sites/${siteId}/schedule`,{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        credentials:'include',
-        body: JSON.stringify(body)
-      });
-      const j = await r.json().catch(()=>({}));
-      if (!r.ok || j.error) {
-        setMsg(`Publish failed: ${j.error||r.statusText}`);
-        return;
-      }
-      setMsg(`Published. Interval ≈ ${j.interval_min} min.`, true);
-    }catch(e){
-      setMsg(`Network error: ${e?.message||e}`);
-    }
-  }
-
-  // wire up
-  $('btnGen').addEventListener('click', e=>{ e.preventDefault(); computePreview(); });
-  $('btnPub').addEventListener('click', e=>{ e.preventDefault(); publishSchedule(); });
-})();
+$('date').value = new Date().toISOString().slice(0,10);
+$('btnPreview').onclick = preview;
+$('btnPublish').onclick = publish;
+preview();
 </script>
 </body>
 </html>
