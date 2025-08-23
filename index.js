@@ -1,4 +1,4 @@
-// index.js — Cargill Virtual Line (ESM)
+// index.js — Cargill Virtual Line (ESM, full backend)
 import 'dotenv/config';
 import express from 'express';
 import cookieParser from 'cookie-parser';
@@ -8,22 +8,23 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+// ------------------------- Paths & ENV ---------------------------------------
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 
-// ---------- ENV ----------
 const PORT = Number(process.env.PORT || 10000);
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 const DB_PATH = process.env.DB_PATH || 'data.db';
-const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
-const TWILIO_AUTH_TOKEN  = process.env.TWILIO_AUTH_TOKEN;
-const TWILIO_PHONE_NUMBER= process.env.TWILIO_PHONE_NUMBER;
 
-// ---------- DB ----------
+// Support both naming schemes for Render vs prior code
+const TWILIO_SID  = process.env.TWILIO_ACCOUNT_SID || process.env.TWILIO_SID;
+const TWILIO_AUTH = process.env.TWILIO_AUTH_TOKEN;
+const TWILIO_FROM = process.env.TWILIO_PHONE_NUMBER;
+
+// ------------------------- DB (idempotent schema) ----------------------------
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 
-// Base schema (safe to re-run)
 db.exec(`
 CREATE TABLE IF NOT EXISTS site_settings (
   site_id INTEGER NOT NULL,
@@ -38,10 +39,10 @@ CREATE TABLE IF NOT EXISTS site_settings (
 CREATE TABLE IF NOT EXISTS time_slots (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   site_id INTEGER NOT NULL,
-  date TEXT NOT NULL,
-  slot_time TEXT NOT NULL,
+  date TEXT NOT NULL,        -- YYYY-MM-DD
+  slot_time TEXT NOT NULL,   -- HH:MM
   is_workin INTEGER DEFAULT 0,
-  reserved_truck_id INTEGER,
+  reserved_truck_id INTEGER, -- reservation id
   reserved_at TEXT,
   hold_token TEXT,
   hold_expires_at TEXT,
@@ -59,11 +60,12 @@ CREATE TABLE IF NOT EXISTS slot_reservations (
   est_amount REAL,
   est_unit TEXT,
   driver_phone TEXT,
-  queue_code TEXT,            -- 4-digit probe code
+  queue_code TEXT,               -- 4-digit probe/confirm code
   status TEXT DEFAULT 'reserved',
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_resv_probe ON slot_reservations (site_id, date, queue_code);
+
 CREATE TABLE IF NOT EXISTS otp_codes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   phone TEXT NOT NULL,
@@ -74,20 +76,20 @@ CREATE TABLE IF NOT EXISTS otp_codes (
 );
 `);
 
-// ---------- Twilio (optional) ----------
+// ------------------------- Twilio (optional) ---------------------------------
 let twilio = null;
-const hasTwilio = TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN && TWILIO_PHONE_NUMBER;
+const hasTwilio = !!(TWILIO_SID && TWILIO_AUTH && TWILIO_FROM);
 if (hasTwilio) {
-  const t = (await import('twilio')).default;
-  twilio = t(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+  const Twilio = (await import('twilio')).default;
+  twilio = Twilio(TWILIO_SID, TWILIO_AUTH);
   console.log('Twilio: client initialized');
 } else {
-  console.log('Twilio: not configured, using SMS mock');
+  console.log('Twilio: not configured (using SMS mock)');
 }
 async function sendSMS(to, body) {
   if (!hasTwilio) { console.log('[SMS MOCK]', to, body); return { sent:false, mock:true }; }
   try {
-    const msg = await twilio.messages.create({ from: TWILIO_PHONE_NUMBER, to, body });
+    const msg = await twilio.messages.create({ from: TWILIO_FROM, to, body });
     return { sent:true, sid: msg.sid };
   } catch (e) {
     console.error('Twilio error:', e?.message || e);
@@ -95,7 +97,7 @@ async function sendSMS(to, body) {
   }
 }
 
-// ---------- App ----------
+// ------------------------- App & Middleware ----------------------------------
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
@@ -105,29 +107,29 @@ app.use(cors({
 }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ---------- Helpers ----------
+// ------------------------- Helpers -------------------------------------------
 const sixDigit = () => String(Math.floor(100000 + Math.random()*900000));
 const fourDigit = () => String(Math.floor(1000 + Math.random()*9000));
 const normPhone = p => {
   const d = String(p||'').replace(/\D/g,'');
   if (/^\d{10}$/.test(d)) return '+1'+d;
-  if (/^1\d{10}$/.test(d)) return '+'+d;
+  if (/^1\d{10}$/.test(d))  return '+'+d;
   if (/^\+1\d{10}$/.test(d)) return d;
   return null;
 };
-const toMin = hhmm => { const [h,m]=hhmm.split(':').map(n=>+n); return h*60+m; };
+const toMin  = hhmm => { const [h,m]=String(hhmm).split(':').map(n=>+n); return h*60+m; };
 const toHHMM = mins => `${String(Math.floor(mins/60)).padStart(2,'0')}:${String(mins%60).padStart(2,'0')}`;
 const todayISO = () => new Date().toISOString().slice(0,10);
 
-// Expire holds helper
 function expireHolds() {
-  db.prepare(`UPDATE time_slots
-              SET hold_token=NULL, hold_expires_at=NULL
-              WHERE hold_expires_at IS NOT NULL
-                AND hold_expires_at < CURRENT_TIMESTAMP`).run();
+  db.prepare(`
+    UPDATE time_slots
+    SET hold_token=NULL, hold_expires_at=NULL
+    WHERE hold_expires_at IS NOT NULL AND hold_expires_at < CURRENT_TIMESTAMP
+  `).run();
 }
 
-// ---------- AUTH ----------
+// ------------------------- OTP Auth ------------------------------------------
 app.post('/auth/request-code', async (req, res) => {
   try {
     const phone = normPhone(req.body?.phone);
@@ -135,18 +137,21 @@ app.post('/auth/request-code', async (req, res) => {
     if (!phone) return res.status(400).json({ error:'invalid phone' });
 
     const code = sixDigit();
-    db.prepare(`INSERT INTO otp_codes (phone, code, role, expires_at)
-                VALUES (?,?,?,datetime('now','+10 minutes'))`)
-      .run(phone, code, role);
+    db.prepare(`
+      INSERT INTO otp_codes (phone, code, role, expires_at)
+      VALUES (?, ?, ?, datetime('now','+10 minutes'))
+    `).run(phone, code, role);
 
-    const sms = await sendSMS(phone,
+    const sms = await sendSMS(
+      phone,
       role==='admin'
-       ? `Cargill Admin Code: ${code}. Expires in 10 minutes.`
-       : `Cargill Sign-in Code: ${code}. Expires in 10 minutes. Reply STOP to opt out.`
+        ? `Cargill Admin Code: ${code}. Expires in 10 minutes.`
+        : `Cargill Sign-in Code: ${code}. Expires in 10 minutes. Reply STOP to opt out.`
     );
     res.json({ ok:true, sms });
-  } catch(e) {
-    console.error(e); res.status(500).json({ error:'server error' });
+  } catch (e) {
+    console.error('/auth/request-code', e);
+    res.status(500).json({ error:'server error' });
   }
 });
 
@@ -161,81 +166,137 @@ app.post('/auth/verify', (req, res) => {
       SELECT * FROM otp_codes
       WHERE phone=? AND code=? AND role=? AND consumed_at IS NULL
         AND datetime(expires_at) > datetime('now')
-      ORDER BY id DESC LIMIT 1`).get(phone, code, role);
+      ORDER BY id DESC LIMIT 1
+    `).get(phone, code, role);
 
     if (!row) return res.status(400).json({ error:'code invalid or expired' });
 
     db.prepare(`UPDATE otp_codes SET consumed_at=CURRENT_TIMESTAMP WHERE id=?`).run(row.id);
+    // (Simple cookies for front-end routing)
     res.cookie('session_phone', phone, { httpOnly:false, sameSite:'lax' });
     res.cookie('session_role' , role , { httpOnly:false, sameSite:'lax' });
     res.json({ ok:true });
-  } catch(e){ console.error(e); res.status(500).json({ error:'server error' }); }
+  } catch (e) {
+    console.error('/auth/verify', e);
+    res.status(500).json({ error:'server error' });
+  }
 });
 
-// ---------- SCHEDULE BUILDER (OVERWRITE OLD SLOTS) ----------
-app.post('/api/sites/:id/schedule', (req,res)=>{
-  try{
+// ------------------------- Schedule PREVIEW (Generate Slots) -----------------
+// POST /api/sites/:id/slots/preview  { date, open_time, close_time, loads_target, workins_per_hour }
+app.post('/api/sites/:id/slots/preview', (req, res) => {
+  try {
     const site_id = +req.params.id;
-    const { date, open_time, close_time, loads_target, workins_per_hour=0 } = req.body || {};
-    if(!site_id || !date || !open_time || !close_time || !loads_target)
+    const { date, open_time, close_time, loads_target, workins_per_hour = 0 } = req.body || {};
+    if (!site_id || !date || !open_time || !close_time || !loads_target)
       return res.status(400).json({ error:'missing fields' });
 
-    // EAST(1) 5min, WEST(2) 6min minimum
-    const minInt = site_id===2 ? 6 : 5;
-    const start = toMin(open_time);
-    const end   = toMin(close_time);
-    const span  = Math.max(1, end - start);
+    const minInt = site_id === 2 ? 6 : 5;
+    const start  = toMin(open_time);
+    const end    = toMin(close_time);
+    const span   = Math.max(1, end - start);
     const interval = Math.max(minInt, Math.floor(span / Math.max(1, loads_target-1)));
 
-    const tx = db.transaction(()=>{
-      // settings
+    const times = [];
+    for (let i=0; i<loads_target; i++) {
+      const t = start + i*interval;
+      if (t>=start && t<=end) times.push({ slot_time: toHHMM(t), is_workin: 0 });
+    }
+    if (workins_per_hour > 0) {
+      const step = Math.max(1, Math.floor(60/workins_per_hour));
+      for (let m=start; m<=end; m+=step) {
+        times.push({ slot_time: toHHMM(m), is_workin: 1 });
+      }
+      // sort combined list by time
+      times.sort((a,b)=> toMin(a.slot_time)-toMin(b.slot_time));
+    }
+
+    res.json({ ok:true, interval_min: interval, items: times });
+  } catch (e) {
+    console.error('/api/sites/:id/slots/preview', e);
+    res.status(500).json({ error:'server error' });
+  }
+});
+
+// ------------------------- Schedule PUBLISH (overwrite) ----------------------
+// POST /api/sites/:id/schedule  { date, open_time, close_time, loads_target, workins_per_hour }
+app.post('/api/sites/:id/schedule', (req, res) => {
+  try {
+    const site_id = +req.params.id;
+    const { date, open_time, close_time, loads_target, workins_per_hour = 0 } = req.body || {};
+    if (!site_id || !date || !open_time || !close_time || !loads_target)
+      return res.status(400).json({ error:'missing fields' });
+
+    const minInt   = site_id === 2 ? 6 : 5;
+    const start    = toMin(open_time);
+    const end      = toMin(close_time);
+    const span     = Math.max(1, end - start);
+    const interval = Math.max(minInt, Math.floor(span / Math.max(1, loads_target-1)));
+
+    const tx = db.transaction(() => {
+      // Save settings
       db.prepare(`
-        INSERT INTO site_settings (site_id,date,loads_target,open_time,close_time,workins_per_hour)
-        VALUES (?,?,?,?,?,?)
-        ON CONFLICT(site_id,date) DO UPDATE SET
-          loads_target=excluded.loads_target,
-          open_time=excluded.open_time,
-          close_time=excluded.close_time,
-          workins_per_hour=excluded.workins_per_hour,
-          updated_at=CURRENT_TIMESTAMP
+        INSERT INTO site_settings (site_id, date, loads_target, open_time, close_time, workins_per_hour)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(site_id, date) DO UPDATE SET
+          loads_target      = excluded.loads_target,
+          open_time         = excluded.open_time,
+          close_time        = excluded.close_time,
+          workins_per_hour  = excluded.workins_per_hour,
+          updated_at        = CURRENT_TIMESTAMP
       `).run(site_id, date, loads_target, open_time, close_time, workins_per_hour);
 
-      // OVERWRITE previous slots for that site/date
-      db.prepare(`DELETE FROM time_slots
-                  WHERE site_id=? AND date=? AND reserved_truck_id IS NULL`).run(site_id, date);
-      // Keep reserved rows; clear holds
-      db.prepare(`UPDATE time_slots SET hold_token=NULL, hold_expires_at=NULL
-                  WHERE site_id=? AND date=?`).run(site_id, date);
+      // Overwrite non-reserved slots for that date
+      db.prepare(`
+        DELETE FROM time_slots
+        WHERE site_id=? AND date=? AND reserved_truck_id IS NULL
+      `).run(site_id, date);
 
-      // Generate target slots
-      const ins = db.prepare(`INSERT OR IGNORE INTO time_slots (site_id,date,slot_time,is_workin)
-                              VALUES (?,?,?,0)`);
-      for(let i=0;i<loads_target;i++){
+      // Always clear holds for this date
+      db.prepare(`
+        UPDATE time_slots
+        SET hold_token=NULL, hold_expires_at=NULL
+        WHERE site_id=? AND date=?
+      `).run(site_id, date);
+
+      // Insert regular slots
+      const ins = db.prepare(`
+        INSERT OR IGNORE INTO time_slots (site_id, date, slot_time, is_workin)
+        VALUES (?, ?, ?, 0)
+      `);
+      for (let i=0; i<loads_target; i++) {
         const t = start + i*interval;
         if (t>=start && t<=end) ins.run(site_id, date, toHHMM(t));
       }
 
-      // Optional work-ins
-      if (workins_per_hour>0){
-        const step = Math.floor(60/workins_per_hour);
-        for(let m=start; m<=end; m+=step){
-          db.prepare(`INSERT OR IGNORE INTO time_slots (site_id,date,slot_time,is_workin)
-                      VALUES (?,?,?,1)`).run(site_id, date, toHHMM(m));
+      // Insert work-ins
+      if (workins_per_hour > 0) {
+        const step = Math.max(1, Math.floor(60 / workins_per_hour));
+        const insW = db.prepare(`
+          INSERT OR IGNORE INTO time_slots (site_id, date, slot_time, is_workin)
+          VALUES (?, ?, ?, 1)
+        `);
+        for (let m=start; m<=end; m+=step) {
+          insW.run(site_id, date, toHHMM(m));
         }
       }
     });
     tx();
 
     res.json({ ok:true, interval_min: interval });
-  }catch(e){ console.error(e); res.status(500).json({ error:'server error' }); }
+  } catch (e) {
+    console.error('/api/sites/:id/schedule', e);
+    res.status(500).json({ error:'server error' });
+  }
 });
 
-// ---------- LIST ALL SLOTS (open + reserved) ----------
-app.get('/api/appointments', (req,res)=>{
-  try{
-    const site_id = parseInt(req.query.site_id,10);
-    const date = String(req.query.date||todayISO());
-    if(!site_id) return res.status(400).json({ error:'site_id required' });
+// ------------------------- Facility Appointments (all slots) -----------------
+// GET /api/appointments?site_id=1&date=YYYY-MM-DD
+app.get('/api/appointments', (req, res) => {
+  try {
+    const site_id = parseInt(req.query.site_id, 10);
+    const date    = String(req.query.date || todayISO());
+    if (!site_id) return res.status(400).json({ error:'site_id required' });
 
     const rows = db.prepare(`
       SELECT
@@ -259,20 +320,23 @@ app.get('/api/appointments', (req,res)=>{
     `).all(site_id, date);
 
     res.json({ ok:true, site_id, date, items: rows });
-  }catch(e){ console.error(e); res.status(500).json({ error:'server error' }); }
+  } catch (e) {
+    console.error('/api/appointments', e);
+    res.status(500).json({ error:'server error' });
+  }
 });
 
-// ---------- OPEN SLOTS FOR DRIVER ----------
-app.get('/api/sites/:id/slots', (req,res)=>{
-  try{
+// ------------------------- Driver (open) Slots -------------------------------
+// GET /api/sites/:id/slots?date=YYYY-MM-DD
+app.get('/api/sites/:id/slots', (req, res) => {
+  try {
     expireHolds();
     const site_id = +req.params.id;
-    const date = String(req.query.date || todayISO());
-    if(!site_id) return res.status(400).json({ error:'site_id required' });
+    const date    = String(req.query.date || todayISO());
+    if (!site_id) return res.status(400).json({ error:'site_id required' });
 
-    // show open (no reservation, no hold)
     const rows = db.prepare(`
-      SELECT slot_time
+      SELECT s.slot_time
       FROM time_slots s
       LEFT JOIN slot_reservations r
         ON r.site_id=s.site_id AND r.date=s.date AND r.slot_time=s.slot_time
@@ -280,45 +344,55 @@ app.get('/api/sites/:id/slots', (req,res)=>{
       ORDER BY time(s.slot_time)
     `).all(site_id, date);
 
-    res.json(rows.map(r=>r.slot_time));
-  }catch(e){ console.error(e); res.status(500).json({ error:'server error' }); }
+    res.json(rows.map(r => r.slot_time));
+  } catch (e) {
+    console.error('/api/sites/:id/slots', e);
+    res.status(500).json({ error:'server error' });
+  }
 });
 
-// ---------- HOLD / CONFIRM ----------
-app.post('/api/slots/hold',(req,res)=>{
+// ------------------------- Hold / Confirm ------------------------------------
+app.post('/api/slots/hold', (req, res) => {
   expireHolds();
   const { site_id, date, slot_time } = req.body || {};
-  if(!site_id || !date || !slot_time) return res.status(400).json({ error:'missing fields' });
+  if (!site_id || !date || !slot_time) return res.status(400).json({ error:'missing fields' });
 
   const row = db.prepare(`
-    SELECT id, reserved_truck_id, hold_expires_at FROM time_slots
-    WHERE site_id=? AND date=? AND slot_time=?`).get(site_id,date,slot_time);
+    SELECT id, reserved_truck_id, hold_expires_at
+    FROM time_slots WHERE site_id=? AND date=? AND slot_time=?
+  `).get(site_id, date, slot_time);
 
-  if(!row) return res.status(404).json({ error:'slot not found' });
-  if(row.reserved_truck_id) return res.status(409).json({ error:'slot reserved' });
-  if(row.hold_expires_at && new Date(row.hold_expires_at)>new Date())
+  if (!row) return res.status(404).json({ error:'slot not found' });
+  if (row.reserved_truck_id) return res.status(409).json({ error:'slot reserved' });
+  if (row.hold_expires_at && new Date(row.hold_expires_at) > new Date())
     return res.status(409).json({ error:'slot on hold' });
 
   const token = crypto.randomUUID();
-  db.prepare(`UPDATE time_slots
-              SET hold_token=?, hold_expires_at=datetime('now','+120 seconds')
-              WHERE id=?`).run(token,row.id);
+  db.prepare(`
+    UPDATE time_slots
+    SET hold_token=?, hold_expires_at=datetime('now','+120 seconds')
+    WHERE id=?
+  `).run(token, row.id);
 
   const ex = db.prepare(`SELECT hold_expires_at AS e FROM time_slots WHERE id=?`).get(row.id).e;
   res.json({ hold_token: token, expires_at: ex });
 });
 
-app.post('/api/slots/confirm', async (req,res)=>{
+app.post('/api/slots/confirm', async (req, res) => {
   expireHolds();
-  const { hold_token, site_id, date, slot_time,
-          driver_name, license_plate, vendor_name,
-          farm_or_ticket, est_amount, est_unit, driver_phone } = req.body || {};
-  if(!hold_token) return res.status(400).json({ error:'hold_token required' });
+  const { hold_token } = req.body || {};
+  if (!hold_token) return res.status(400).json({ error:'hold_token required' });
 
   const slot = db.prepare(`
     SELECT * FROM time_slots
-    WHERE hold_token=? AND hold_expires_at > CURRENT_TIMESTAMP`).get(hold_token);
-  if(!slot) return res.status(410).json({ error:'hold expired or invalid' });
+    WHERE hold_token=? AND hold_expires_at > CURRENT_TIMESTAMP
+  `).get(hold_token);
+  if (!slot) return res.status(410).json({ error:'hold expired or invalid' });
+
+  const {
+    driver_name, license_plate, vendor_name,
+    farm_or_ticket, est_amount, est_unit, driver_phone
+  } = req.body || {};
 
   const probe = fourDigit();
 
@@ -330,63 +404,77 @@ app.post('/api/slots/confirm', async (req,res)=>{
     RETURNING id
   `).get(
     slot.site_id, slot.date, slot.slot_time,
-    driver_name||null, license_plate||null, vendor_name||null,
-    farm_or_ticket||null, est_amount||null, (est_unit||'BUSHELS').toUpperCase(),
-    normPhone(driver_phone)||null, probe
+    driver_name || null, license_plate || null, vendor_name || null,
+    farm_or_ticket || null, est_amount || null, (est_unit || 'BUSHELS').toUpperCase(),
+    normPhone(driver_phone) || null, probe
   );
 
-  db.prepare(`UPDATE time_slots
-              SET reserved_truck_id=?, reserved_at=CURRENT_TIMESTAMP,
-                  hold_token=NULL, hold_expires_at=NULL
-              WHERE id=?`).run(info.id, slot.id);
+  db.prepare(`
+    UPDATE time_slots
+    SET reserved_truck_id=?, reserved_at=CURRENT_TIMESTAMP,
+        hold_token=NULL, hold_expires_at=NULL
+    WHERE id=?
+  `).run(info.id, slot.id);
 
   if (driver_phone) {
-    await sendSMS(driver_phone,
+    await sendSMS(
+      driver_phone,
       `Cargill: Confirmed ${slot.date} at ${slot.slot_time}. Probe code: ${probe}. Reply STOP to opt out.`
     );
   }
+
   res.status(201).json({ ok:true, reservation_id: info.id, queue_code: probe });
 });
 
-// ---------- CANCEL / REASSIGN (return probe code) ----------
-app.post('/api/slots/cancel',(req,res)=>{
+// ------------------------- Cancel / Reassign ---------------------------------
+app.post('/api/slots/cancel', (req, res) => {
   const { reservation_id } = req.body || {};
-  if(!reservation_id) return res.status(400).json({ error:'reservation_id required' });
+  if (!reservation_id) return res.status(400).json({ error:'reservation_id required' });
 
   const r = db.prepare(`SELECT * FROM slot_reservations WHERE id=?`).get(reservation_id);
-  if(!r) return res.status(404).json({ error:'not found' });
+  if (!r) return res.status(404).json({ error:'not found' });
 
   db.prepare(`DELETE FROM slot_reservations WHERE id=?`).run(reservation_id);
-  db.prepare(`UPDATE time_slots
-              SET reserved_truck_id=NULL, reserved_at=NULL
-              WHERE site_id=? AND date=? AND slot_time=? AND reserved_truck_id=?`)
-    .run(r.site_id, r.date, r.slot_time, r.id);
+  db.prepare(`
+    UPDATE time_slots
+    SET reserved_truck_id=NULL, reserved_at=NULL
+    WHERE site_id=? AND date=? AND slot_time=? AND reserved_truck_id=?
+  `).run(r.site_id, r.date, r.slot_time, r.id);
 
   res.json({ ok:true, reservation_id, queue_code: r.queue_code });
 });
 
-app.post('/api/slots/reassign',(req,res)=>{
+app.post('/api/slots/reassign', (req, res) => {
   const { reservation_id, to_slot_time } = req.body || {};
-  if(!reservation_id || !to_slot_time) return res.status(400).json({ error:'missing fields' });
+  if (!reservation_id || !to_slot_time) return res.status(400).json({ error:'missing fields' });
 
   const r = db.prepare(`SELECT * FROM slot_reservations WHERE id=?`).get(reservation_id);
-  if(!r) return res.status(404).json({ error:'not found' });
+  if (!r) return res.status(404).json({ error:'not found' });
 
   // ensure target slot exists
-  db.prepare(`INSERT OR IGNORE INTO time_slots (site_id,date,slot_time,is_workin)
-              VALUES (?,?,?,0)`).run(r.site_id, r.date, to_slot_time);
+  db.prepare(`
+    INSERT OR IGNORE INTO time_slots (site_id, date, slot_time, is_workin)
+    VALUES (?, ?, ?, 0)
+  `).run(r.site_id, r.date, to_slot_time);
 
-  // ensure it's free
-  const tgt = db.prepare(`SELECT * FROM time_slots WHERE site_id=? AND date=? AND slot_time=?`)
-                .get(r.site_id, r.date, to_slot_time);
-  if(tgt.reserved_truck_id) return res.status(409).json({ error:'target slot reserved' });
+  const tgt = db.prepare(`
+    SELECT * FROM time_slots WHERE site_id=? AND date=? AND slot_time=?
+  `).get(r.site_id, r.date, to_slot_time);
+  if (tgt.reserved_truck_id) return res.status(409).json({ error:'target slot reserved' });
 
-  const tx = db.transaction(()=>{
-    db.prepare(`UPDATE time_slots SET reserved_truck_id=NULL, reserved_at=NULL
-                WHERE site_id=? AND date=? AND slot_time=? AND reserved_truck_id=?`)
-      .run(r.site_id, r.date, r.slot_time, r.id);
-    db.prepare(`UPDATE time_slots SET reserved_truck_id=?, reserved_at=CURRENT_TIMESTAMP
-                WHERE id=?`).run(r.id, tgt.id);
+  const tx = db.transaction(() => {
+    db.prepare(`
+      UPDATE time_slots
+      SET reserved_truck_id=NULL, reserved_at=NULL
+      WHERE site_id=? AND date=? AND slot_time=? AND reserved_truck_id=?
+    `).run(r.site_id, r.date, r.slot_time, r.id);
+
+    db.prepare(`
+      UPDATE time_slots
+      SET reserved_truck_id=?, reserved_at=CURRENT_TIMESTAMP
+      WHERE id=?
+    `).run(r.id, tgt.id);
+
     db.prepare(`UPDATE slot_reservations SET slot_time=? WHERE id=?`)
       .run(to_slot_time, reservation_id);
   });
@@ -395,7 +483,11 @@ app.post('/api/slots/reassign',(req,res)=>{
   res.json({ ok:true, reservation_id, to_slot_time, queue_code: r.queue_code });
 });
 
-// ---------- START ----------
-app.listen(PORT, ()=> {
+// ------------------------- Health --------------------------------------------
+app.get('/healthz', (_req, res) => res.json({ ok:true }));
+
+// ------------------------- Start ---------------------------------------------
+app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
+  console.log('CORS origin:', CORS_ORIGIN);
 });
