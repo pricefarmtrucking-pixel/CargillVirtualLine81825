@@ -1,0 +1,115 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Admin Allowlist</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
+    .wrap { max-width: 720px; margin: 4vh auto; padding: 0 16px; }
+    .row { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
+    input, select, button { padding:.55rem .7rem; border:1px solid #ccc; border-radius:10px; }
+    table { width:100%; border-collapse: collapse; margin-top:1rem; }
+    th, td { padding:.5rem; border-bottom:1px solid #eee; text-align:left; }
+    .tag { display:inline-block; padding:.25rem .5rem; border:1px solid #ddd; border-radius:999px; margin:.15rem .25rem 0 0; font-size:.85rem; }
+    .muted { color:#666; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h2>Admin / Probe Allowlist</h2>
+  <div class="row" style="margin:.5rem 0 1rem;">
+    <label>
+      Role
+      <select id="role">
+        <option value="admin">Admin</option>
+        <option value="probe">Probe</option>
+      </select>
+    </label>
+    <button id="refresh">Refresh</button>
+  </div>
+
+  <div class="row">
+    <input id="phone" placeholder="(555) 555-5555"/>
+    <button id="add">Add Number</button>
+  </div>
+  <div class="muted" id="msg"></div>
+
+  <h3 style="margin-top:1.25rem;">Configured via ENV</h3>
+  <div id="env"></div>
+
+  <h3 style="margin-top:1.25rem;">Stored in Database</h3>
+  <table>
+    <thead><tr><th>Phone</th><th>Added</th><th></th></tr></thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+function normPhone(p){
+  const d = String(p||'').replace(/\D/g,'');
+  if (/^\d{10}$/.test(d)) return '+1'+d;
+  if (/^1\d{10}$/.test(d)) return '+'+d;
+  if (/^\+1\d{10}$/.test(d)) return d;
+  return null;
+}
+
+async function load(){
+  $('msg').textContent = 'Loading…';
+  const role = $('role').value;
+  const r = await fetch(`/api/admin/allowlist?role=${role}`);
+  const data = await r.json().catch(()=>({}));
+  $('msg').textContent = '';
+
+  $('env').innerHTML = '';
+  (data.env || []).forEach(p => {
+    const span = document.createElement('span');
+    span.className='tag';
+    span.textContent=p;
+    $('env').appendChild(span);
+  });
+
+  const tb = $('tbody'); tb.innerHTML='';
+  (data.db || []).forEach(row=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${row.phone}</td>
+      <td>${row.added_at || ''}</td>
+      <td><button data-phone="${row.phone}">Remove</button></td>
+    `;
+    tr.querySelector('button').onclick = async (ev)=>{
+      const phone = ev.target.getAttribute('data-phone');
+      if (!confirm('Remove '+phone+'?')) return;
+      const resp = await fetch('/api/admin/allowlist', {
+        method:'DELETE',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ role, phone })
+      }).then(r=>r.json());
+      if(!resp.ok && resp.error) alert(resp.error);
+      load();
+    };
+    tb.appendChild(tr);
+  });
+}
+
+$('add').onclick = async ()=>{
+  const role = $('role').value;
+  const phone = normPhone($('phone').value);
+  if (!phone) { alert('Enter a valid US number.'); return; }
+  const resp = await fetch('/api/admin/allowlist', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ role, phone })
+  }).then(r=>r.json());
+  if(!resp.ok && resp.error) alert(resp.error);
+  $('phone').value='';
+  load();
+};
+
+$('role').onchange = load;
+$('refresh').onclick = load;
+load();
+</script>
+</body>
+</html>
