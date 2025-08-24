@@ -6,168 +6,237 @@
   <title>Manage Reservation — Cargill Soybean</title>
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
-    .wrap { max-width: 900px; margin: 5vh auto; padding: 0 16px; }
-    .hdr { display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; }
-    .btn { padding:.55rem .9rem; border:1px solid #ccc; background:#f7f7f7; border-radius:10px; cursor:pointer; }
-    .btn.primary { background:#1e90ff; color:#fff; border-color:#1e90ff; }
-    label { display:block; font-size:.9rem; margin:.4rem 0; }
-    input, select { width:100%; padding:.6rem .7rem; border:1px solid #ccc; border-radius:10px; }
-    .grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); gap:.7rem; }
-    .card { border:1px solid #ddd; border-radius:12px; padding:1rem; background:#fff; box-shadow:0 1px 8px rgba(0,0,0,.03); margin-top:1rem; }
-    .muted { color:#666; }
-    .error { color:#b00020; margin-top:.5rem; }
-    .ok { color:#0a7d26; margin-top:.5rem; }
-    .row { display:flex; gap:.5rem; align-items:center; }
-    .small { font-size:.9rem; }
+    .wrap { max-width: 720px; margin: 5vh auto; padding: 0 16px; }
+    .card { border:1px solid #ddd; border-radius:12px; padding:1.25rem; background:#fff; box-shadow: 0 2px 12px rgba(0,0,0,.04); }
+    h1 { font-size:1.35rem; margin:.25rem 0 1rem; }
+    h2 { font-size:1.05rem; margin:0 0 .5rem; color:#333; }
+    label { display:block; font-size:.9rem; margin:.55rem 0 .35rem; color:#444; }
+    input, select { width:100%; padding:.7rem .8rem; border:1px solid #ccc; border-radius:10px; font-size:1rem; }
+    .row { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px,1fr)); gap:.75rem; }
+    .muted { color:#666; font-size:.95rem; }
+    .small { color:#666; font-size:.9rem; }
+    .btn { padding:.65rem .95rem; border:1px solid #ccc; border-radius:10px; background:#f7f7f7; cursor:pointer; }
+    .btn.primary { background:#1e90ff; border-color:#1e90ff; color:#fff; }
+    .btn:disabled { opacity:.6; cursor:not-allowed; }
+    .bar { display:flex; justify-content:space-between; gap:.5rem; align-items:center; flex-wrap:wrap; }
+    .ok { color:#0a7d26; }
+    .err { color:#b00020; }
+    .pill { display:inline-block; padding:.25rem .55rem; border-radius:999px; border:1px solid #eee; background:#f8f8f8; font-variant-numeric:tabular-nums; }
+    .section { margin-top:1rem; padding-top:.75rem; border-top:1px dashed #eee; }
+    a.link { color:#1e90ff; text-decoration:none; }
   </style>
 </head>
 <body>
 <div class="wrap">
-  <div class="hdr">
-    <h2 style="margin:0;">Manage Reservation</h2>
+  <div class="bar" style="margin-bottom:.75rem;">
+    <a class="link" href="index.html">← Home</a>
+    <div class="small">Need a time instead? <a class="link" href="driver-login.html">Driver Login</a></div>
+  </div>
+
+  <div class="card" id="findCard">
+    <h1>Manage Your Reservation</h1>
+    <p class="muted">Enter your 4‑digit Probe Code and the phone number used when you booked.</p>
     <div class="row">
-      <a class="btn" href="index.html">Home</a>
-      <a class="btn" href="driver-login.html">Driver Login</a>
+      <div>
+        <label>Probe Code</label>
+        <input id="probe" placeholder="4 digits" inputmode="numeric" maxlength="4"/>
+      </div>
+      <div>
+        <label>Phone (full or last 4)</label>
+        <input id="phone" placeholder="(555) 555‑5555 or last 4" inputmode="tel"/>
+      </div>
+    </div>
+    <div class="bar" style="margin-top:.9rem;">
+      <div id="findMsg" class="small"></div>
+      <button id="findBtn" class="btn primary">Find Reservation</button>
     </div>
   </div>
 
-  <div class="card">
-    <div class="grid">
-      <div>
-        <label>Probe Code (4 digits)</label>
-        <input id="probe" placeholder="1234" maxlength="4" inputmode="numeric"/>
+  <div class="card" id="editCard" style="display:none;">
+    <h2>Reservation</h2>
+    <div class="row" style="margin-bottom:.5rem;">
+      <div><span class="small">Site</span><div id="siteOut" class="pill">—</div></div>
+      <div><span class="small">Date</span><div id="dateOut" class="pill">—</div></div>
+      <div><span class="small">Time</span><div id="timeOut" class="pill">—</div></div>
+      <div><span class="small">Probe Code</span><div id="codeOut" class="pill">—</div></div>
+    </div>
+
+    <div class="section">
+      <h2>Edit Details</h2>
+      <div class="row">
+        <div>
+          <label>Driver Name</label>
+          <input id="driver_name" maxlength="80" placeholder="Jane Doe"/>
+        </div>
+        <div>
+          <label>Driver Phone</label>
+          <input id="driver_phone" inputmode="tel" placeholder="(555) 555‑5555"/>
+        </div>
+        <div>
+          <label>License Plate</label>
+          <input id="license_plate" maxlength="32" placeholder="IA HFG‑210"/>
+        </div>
+        <div>
+          <label>Beans Sold Thru (Vendor)</label>
+          <input id="vendor_name" maxlength="80" placeholder="Cargill / Co‑op / Broker"/>
+        </div>
+        <div>
+          <label>Farm Name OR Ticket #</label>
+          <input id="farm_or_ticket" maxlength="80" placeholder="Smith Family Farms or 123456"/>
+        </div>
+        <div>
+          <label>Estimated Amount</label>
+          <div class="row" style="grid-template-columns: 1fr 1fr;">
+            <input id="est_amount" type="number" min="1" max="100000" step="1" placeholder="e.g., 950"/>
+            <select id="est_unit">
+              <option>BUSHELS</option>
+              <option>TONS</option>
+            </select>
+          </div>
+        </div>
       </div>
-      <div>
-        <label>Phone (optional, last 10 digits)</label>
-        <input id="phone" placeholder="(555) 555‑5555" inputmode="tel"/>
-      </div>
-      <div>
-        <label>&nbsp;</label>
-        <button id="lookupBtn" class="btn primary" style="width:100%;">Find My Reservation</button>
+
+      <label style="margin-top:.65rem;">
+        <input id="notify" type="checkbox" checked style="width:auto; margin-right:.4rem; vertical-align:middle;"/>
+        Send me a confirmation text after saving
+      </label>
+
+      <div class="bar" style="margin-top:1rem;">
+        <div id="editMsg" class="small"></div>
+        <div>
+          <button id="cancelBtn" class="btn">Cancel</button>
+          <button id="saveBtn" class="btn primary">Save Changes</button>
+        </div>
       </div>
     </div>
-    <div id="lookMsg" class="small muted" style="margin-top:.5rem;"></div>
   </div>
-
-  <div id="results"></div>
 </div>
 
 <script>
-const $ = (id)=>document.getElementById(id);
-const api = p=>p;
+const $ = (id) => document.getElementById(id);
 
-function normPhone(p){
-  const d = String(p||'').replace(/\D/g,'');
-  if (/^\d{10}$/.test(d)) return '+1'+d;
-  if (/^1\d{10}$/.test(d)) return '+'+d;
-  if (/^\+1\d{10}$/.test(d)) return d;
+function normPhone(p) {
+  const d = String(p||'').replace(/\\D/g,'');
+  if (/^\\d{10}$/.test(d)) return '+1'+d;
+  if (/^1\\d{10}$/.test(d)) return '+'+d;
+  if (/^\\+1\\d{10}$/.test(d)) return d;
   return null;
 }
 
-function cardFor(res){
-  const wrap = document.createElement('div');
-  wrap.className = 'card';
-  wrap.innerHTML = `
-    <div class="row" style="justify-content:space-between; margin-bottom:.5rem;">
-      <div><strong>${res.date} ${res.slot_time}</strong> — ${res.site_id===1?'EAST':'WEST'}</div>
-      <div class="small muted">Probe: ${res.queue_code}</div>
-    </div>
-    <div class="grid">
-      <div><label>Driver Name</label><input data-k="driver_name" value="${res.driver_name||''}"/></div>
-      <div><label>Driver Phone</label><input data-k="driver_phone" value="${res.driver_phone||''}"/></div>
-      <div><label>License Plate</label><input data-k="license_plate" value="${res.license_plate||''}"/></div>
-      <div><label>Vendor</label><input data-k="vendor_name" value="${res.vendor_name||''}"/></div>
-      <div><label>Farm/Ticket</label><input data-k="farm_or_ticket" value="${res.farm_or_ticket||''}"/></div>
-      <div class="row">
-        <div style="flex:1">
-          <label>Estimated Amount</label>
-          <input data-k="est_amount" type="number" value="${res.est_amount??''}"/>
-        </div>
-        <div style="flex:1">
-          <label>Unit</label>
-          <select data-k="est_unit">
-            <option ${res.est_unit==='BUSHELS'?'selected':''}>BUSHELS</option>
-            <option ${res.est_unit==='TONS'?'selected':''}>TONS</option>
-          </select>
-        </div>
-      </div>
-    </div>
-    <div class="row" style="justify-content:flex-end; margin-top:.8rem; gap:.5rem;">
-      <button class="btn" data-act="cancel">Cancel Reservation</button>
-      <button class="btn primary" data-act="save">Save Changes</button>
-    </div>
-    <div class="small" id="msg-${res.id}" style="margin-top:.5rem;"></div>
-  `;
-  wrap.querySelector('[data-act="save"]').onclick = ()=>save(res.id, wrap);
-  wrap.querySelector('[data-act="cancel"]').onclick = ()=>cancel(res.id, wrap);
-  return wrap;
+function toTitleSite(id){ return id==1?'EAST (1)': id==2?'WEST (2)':'—'; }
+
+let context = null; // { reservation_id, site_id, date, slot_time, queue_code }
+
+function setFindMsg(txt, ok=false){
+  const el=$('findMsg');
+  el.className = 'small ' + (ok ? 'ok' : 'err');
+  el.textContent = txt;
+}
+function setEditMsg(txt, ok=false){
+  const el=$('editMsg');
+  el.className = 'small ' + (ok ? 'ok' : 'err');
+  el.textContent = txt;
 }
 
-async function lookup(){
-  $('lookMsg').textContent = 'Searching…';
+async function handleFind(){
+  setFindMsg('Checking…', true);
   const probe = String(($('probe').value||'').trim());
-  const phone = normPhone($('phone').value||'');
-  if (!/^\d{4}$/.test(probe)) { $('lookMsg').textContent='Enter your 4‑digit probe code.'; return; }
+  const rawPhone = String(($('phone').value||'').trim());
+  const phoneFull = normPhone(rawPhone);
+  const last4 = rawPhone.replace(/\\D/g,'').slice(-4);
+
+  if(!/^\\d{4}$/.test(probe)) { setFindMsg('Probe Code must be 4 digits.'); return; }
+  if(!(phoneFull || /^\\d{4}$/.test(last4))) { setFindMsg('Enter full phone or last 4.'); return; }
 
   try{
-    const r = await fetch(api('/api/driver/reservation-lookup'),{
+    const r = await fetch('/api/driver/manage/find', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ probe_code: probe, phone })
+      body: JSON.stringify({ probe_code: probe, phone: phoneFull, last4 })
     });
-    const data = await r.json();
-    if (!r.ok || !data.ok) throw new Error(data.error||('HTTP '+r.status));
+    const data = await r.json().catch(()=>({}));
+    if(!r.ok || !data.ok) throw new Error(data.error || ('HTTP '+r.status));
 
-    const list = data.items||[];
-    const el = $('results'); el.innerHTML = '';
-    if (!list.length){ $('lookMsg').textContent='No matching reservations found.'; return; }
-    $('lookMsg').textContent = `Found ${list.length} reservation${list.length>1?'s':''}.`;
-    for (const row of list) el.appendChild(cardFor(row));
+    // build context + populate
+    context = data.reservation;
+    $('siteOut').textContent = toTitleSite(context.site_id);
+    $('dateOut').textContent = context.date;
+    $('timeOut').textContent = context.slot_time;
+    $('codeOut').textContent = context.queue_code;
+
+    // fill editable fields
+    $('driver_name').value   = context.driver_name || '';
+    $('driver_phone').value  = context.driver_phone || '';
+    $('license_plate').value = context.license_plate || '';
+    $('vendor_name').value   = context.vendor_name || '';
+    $('farm_or_ticket').value= context.farm_or_ticket || '';
+    $('est_amount').value    = context.est_amount ?? '';
+    $('est_unit').value      = (context.est_unit||'BUSHELS').toUpperCase();
+
+    setFindMsg('');
+    $('findCard').style.display='none';
+    $('editCard').style.display='';
   }catch(e){
-    $('lookMsg').textContent = e.message || 'Lookup failed.';
+    setFindMsg(e.message || 'Unable to find a reservation with that combination.');
   }
 }
 
-async function save(id, card){
-  const probe = String(($('probe').value||'').trim());
-  const phone = normPhone($('phone').value||'');
-  const kv = {};
-  card.querySelectorAll('[data-k]').forEach(inp=>{
-    let v = inp.value;
-    if (inp.getAttribute('data-k')==='est_amount') v = v===''?null:Number(v);
-    kv[inp.getAttribute('data-k')] = v;
-  });
-  const m = document.getElementById('msg-'+id);
-  m.textContent = 'Saving…'; m.className='small muted';
-  try{
-    const r = await fetch(api('/api/driver/reservation-update'),{
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ reservation_id:id, probe_code:probe, phone, ...kv })
-    });
-    const data = await r.json();
-    if (!r.ok || !data.ok) throw new Error(data.error||('HTTP '+r.status));
-    m.textContent = 'Saved.'; m.className='small ok';
-  }catch(e){ m.textContent = e.message || 'Save failed.'; m.className='small error'; }
+function gatherUpdate(){
+  const est_amount = Number($('est_amount').value);
+  const payload = {
+    reservation_id: context.reservation_id,
+    probe_code: context.queue_code,
+    phone: normPhone($('driver_phone').value) || $('driver_phone').value, // backend re‑normalizes
+    driver_name: $('driver_name').value.trim() || null,
+    license_plate: $('license_plate').value.trim() || null,
+    vendor_name: $('vendor_name').value.trim() || null,
+    farm_or_ticket: $('farm_or_ticket').value.trim() || null,
+    est_amount: Number.isFinite(est_amount) ? est_amount : null,
+    est_unit: ($('est_unit').value||'BUSHELS').toUpperCase(),
+    notify: $('notify').checked === true
+  };
+  return payload;
 }
 
-async function cancel(id, card){
-  const probe = String(($('probe').value||'').trim());
-  const phone = normPhone($('phone').value||'');
-  const m = document.getElementById('msg-'+id);
-  if (!confirm('Cancel this reservation?')) return;
-  m.textContent='Canceling…'; m.className='small muted';
+async function handleSave(){
+  setEditMsg('');
+  if(!context) return;
+
+  if(!confirm('Save your changes to this reservation?')) return;
+
   try{
-    const r = await fetch(api('/api/driver/reservation-cancel'),{
+    setEditMsg('Saving…', true);
+    const body = gatherUpdate();
+    // include the original lookup factors as double‑check
+    body.lookup_phone = $('phone').value.trim();
+    body.lookup_probe = $('probe').value.trim();
+
+    const r = await fetch('/api/driver/manage/update', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ reservation_id:id, probe_code:probe, phone })
+      body: JSON.stringify(body)
     });
-    const data = await r.json();
-    if (!r.ok || !data.ok) throw new Error(data.error||('HTTP '+r.status));
-    m.textContent='Canceled.'; m.className='small ok';
-    card.remove();
-  }catch(e){ m.textContent = e.message || 'Cancel failed.'; m.className='small error'; }
+    const data = await r.json().catch(()=>({}));
+    if(!r.ok || !data.ok) throw new Error(data.error || ('HTTP '+r.status));
+
+    setEditMsg('Saved!', true);
+  }catch(e){
+    setEditMsg(e.message || 'Save failed.');
+  }
 }
 
-$('lookupBtn').onclick = lookup;
+function handleCancel(){
+  $('editCard').style.display='none';
+  $('findCard').style.display='';
+  $('findMsg').textContent='';
+  context=null;
+}
+
+$('findBtn').addEventListener('click', handleFind);
+$('saveBtn').addEventListener('click', handleSave);
+$('cancelBtn').addEventListener('click', handleCancel);
+
+// Enter key on probe/phone triggers find
+$('probe').addEventListener('keydown', (e)=>{ if(e.key==='Enter') handleFind(); });
+$('phone').addEventListener('keydown', (e)=>{ if(e.key==='Enter') handleFind(); });
 </script>
 </body>
 </html>
