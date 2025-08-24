@@ -11,9 +11,7 @@
     h1 { font-size:1.25rem; margin:0 0 .5rem; }
     p.note { color:#666; margin:.25rem 0 1rem; }
     label { display:block; font-size:.9rem; margin:.65rem 0 .35rem; color:#444; }
-    input[type="tel"], input[type="text"] {
-      width:100%; padding:.7rem .8rem; border:1px solid #ccc; border-radius:10px; font-size:1rem;
-    }
+    input[type="tel"], input[type="text"] { width:100%; padding:.7rem .8rem; border:1px solid #ccc; border-radius:10px; font-size:1rem; }
     .row { display:flex; gap:.5rem; align-items:center; }
     .btn { padding:.65rem .9rem; border:1px solid #ccc; border-radius:10px; background:#f7f7f7; cursor:pointer; }
     .btn.primary { background:#1e90ff; border-color:#1e90ff; color:#fff; }
@@ -53,6 +51,13 @@
       <div id="m2" class="help"></div>
     </div>
   </div>
+
+  <!-- NEW: manage link -->
+  <p class="center muted" style="margin-top:.75rem;">
+    Want to edit or view a reservation?  
+    <a class="link" href="driver-manage.html">Manage reservation with your Probe Code</a>
+  </p>
+
   <p class="center muted" style="margin-top:.75rem;">By continuing you agree to receive a one‑time text message for verification.</p>
 </div>
 
@@ -60,9 +65,9 @@
 const $ = (id) => document.getElementById(id);
 
 function normPhone(p) {
-  const d = String(p||'').replace(/\D/g,'');
-  if (/^\d{10}$/.test(d)) return '+1' + d;
-  if (/^1\d{10}$/.test(d)) return '+' + d;
+  const d = String(p||'").replace(/\D/g,'');
+  if (/^\d{10}$/.test(d)) return '+1'+d;
+  if (/^1\d{10}$/.test(d)) return '+'+d;
   if (/^\+1\d{10}$/.test(d)) return d;
   return null;
 }
@@ -73,93 +78,50 @@ function nextUrl() {
 }
 
 let countdown = 30, timer = null;
-
 function startTimer() {
   $('resendBtn').disabled = true;
   $('secs').textContent = String(countdown);
   timer = setInterval(() => {
     countdown -= 1;
     $('secs').textContent = String(countdown);
-    if (countdown <= 0) {
-      clearInterval(timer);
-      $('resendBtn').disabled = false;
-      $('secs').textContent = '0';
-    }
+    if (countdown <= 0) { clearInterval(timer); $('resendBtn').disabled = false; $('secs').textContent = '0'; }
   }, 1000);
 }
 
 async function requestCode() {
-  $('m1').className = 'help';
-  $('m1').textContent = 'Sending…';
+  $('m1').className = 'help'; $('m1').textContent = 'Sending…';
   const phone = normPhone($('phone').value);
-  if (!phone) {
-    $('m1').className = 'error';
-    $('m1').textContent = 'Please enter a valid US mobile number.';
-    return;
-  }
+  if (!phone) { $('m1').className='error'; $('m1').textContent='Please enter a valid US mobile number.'; return; }
   try {
-    const r = await fetch('/auth/request-code', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ phone, role:'driver' })
-    });
+    const r = await fetch('/auth/request-code',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,role:'driver'})});
     const data = await r.json().catch(()=>({}));
     if (!r.ok || data.error) throw new Error(data.error || ('HTTP '+r.status));
-
-    $('m1').className = 'ok';
-    $('m1').textContent = 'Code sent. Check your messages.';
-    $('step1').style.display = 'none';
-    $('step2').style.display = '';
-    countdown = 30;
-    startTimer();
-  } catch (e) {
-    $('m1').className = 'error';
-    $('m1').textContent = e.message || 'Failed to send code.';
-  }
+    $('m1').className='ok'; $('m1').textContent='Code sent. Check your messages.';
+    $('step1').style.display='none'; $('step2').style.display='';
+    countdown = 30; startTimer();
+  } catch (e) { $('m1').className='error'; $('m1').textContent = e.message || 'Failed to send code.'; }
 }
 
-async function resendCode() {
-  // Allow resend after timer unlocks
-  if ($('resendBtn').disabled) return;
-  await requestCode();
-}
+async function resendCode(){ if(!$('resendBtn').disabled){ await requestCode(); } }
 
-async function verifyCode() {
-  $('m2').className = 'help';
-  $('m2').textContent = 'Verifying…';
+async function verifyCode(){
+  $('m2').className='help'; $('m2').textContent='Verifying…';
   const phone = normPhone($('phone').value);
   const code  = String(($('code').value||'').trim());
-  if (!phone || !/^\d{6}$/.test(code)) {
-    $('m2').className = 'error';
-    $('m2').textContent = 'Enter the 6‑digit code exactly.';
-    return;
-  }
-  try {
-    const r = await fetch('/auth/verify', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ phone, code, role:'driver' })
-    });
+  if (!phone || !/^\d{6}$/.test(code)) { $('m2').className='error'; $('m2').textContent='Enter the 6‑digit code exactly.'; return; }
+  try{
+    const r = await fetch('/auth/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone, code, role:'driver'})});
     const data = await r.json().catch(()=>({}));
     if (!r.ok || data.error) throw new Error(data.error || ('HTTP '+r.status));
-
-    // Server sets cookies session_phone + session_role=driver on success.
-    $('m2').className = 'ok';
-    $('m2').textContent = 'Success! Redirecting…';
-    // small delay feels nice
-    setTimeout(()=> window.location.replace(nextUrl()), 300);
-  } catch (e) {
-    $('m2').className = 'error';
-    $('m2').textContent = e.message || 'Verification failed.';
-  }
+    $('m2').className='ok'; $('m2').textContent='Success! Redirecting…';
+    setTimeout(()=>window.location.replace(nextUrl()),300);
+  }catch(e){ $('m2').className='error'; $('m2').textContent=e.message || 'Verification failed.'; }
 }
 
-$('sendBtn').addEventListener('click', requestCode);
-$('resendBtn').addEventListener('click', resendCode);
-$('verifyBtn').addEventListener('click', verifyCode);
-
-// Quick enter key support on code box
-$('code').addEventListener('keydown', (ev) => {
-  if (ev.key === 'Enter') verifyCode();
-});
+$('sendBtn').onclick=requestCode;
+$('resendBtn').onclick=resendCode;
+$('verifyBtn').onclick=verifyCode;
+$('code').addEventListener('keydown',ev=>{ if(ev.key==='Enter') verifyCode(); });
 </script>
 </body>
 </html>
