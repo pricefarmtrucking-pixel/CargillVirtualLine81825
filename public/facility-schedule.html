@@ -59,7 +59,7 @@
 
     <div class="field">
       <label>Disabled loads (auto)</label>
-      <!-- NOTE: server expects the field name "disabled_loads" -->
+      <!-- server expects "disabled_loads" -->
       <input id="disabledLoads" type="text" inputmode="numeric" placeholder="10" />
     </div>
 
@@ -146,7 +146,27 @@
       return data;
     }
 
-    // IMPORTANT: use "disabled_loads" (what the server expects)
+    // compute fallback disabled flags if API preview doesn't include them
+    function applyDisabledFallback(items, disabledLoads) {
+      const list = items.map(x => ({ ...x })); // shallow copy
+      const need = Math.max(0, Number(disabledLoads) || 0);
+      if (!list.length || need <= 0) return list;
+      const already = list.filter(x => x.disabled).length;
+      if (already >= need) return list;
+
+      const stride = Math.max(1, Math.round(list.length / need));
+      let added = 0;
+      for (let i = stride - 1; i < list.length && (already + added) < need; i += stride) {
+        // don’t override any explicit true/false if it exists; only set when undefined/false
+        if (!list[i].disabled) {
+          list[i].disabled = true;
+          added++;
+        }
+      }
+      return list;
+    }
+
+    // values sent to server (note the "disabled_loads" key)
     function values() {
       const site_id = Number(siteEl.value);
       const date = dateEl.value;
@@ -166,9 +186,13 @@
         }
         showMessage('Generating…');
         const res = await callJSON(`/api/sites/${v.site_id}/slots/preview`, v);
-        renderSlots(res.items || []);
-        const disabledCount = (res.items || []).filter(s => s.disabled).length;
-        showMessage(`Generated ${res.items?.length ?? 0} slots; disabled ${disabledCount}. Interval ≈ ${res.interval_min} min.`);
+
+        // Ensure disabled flags are present for display
+        const items = applyDisabledFallback(res.items || [], v.disabled_loads);
+        renderSlots(items);
+
+        const disabledCount = items.filter(s => s.disabled).length;
+        showMessage(`Generated ${items.length} slots; disabled ${disabledCount}. Interval ≈ ${res.interval_min} min.`);
       } catch (e) {
         showMessage(`Error: ${e.message || e}`, 'error');
       }
@@ -184,6 +208,7 @@
         showMessage('Publishing…');
         const res = await callJSON(`/api/sites/${v.site_id}/schedule`, v);
         showMessage(`Published. Interval ≈ ${res.interval_min} min.`, 'ok');
+        // Re-run preview to reflect what will be in DB
         await preview();
       } catch (e) {
         showMessage(`Error: ${e.message || e}`, 'error');
