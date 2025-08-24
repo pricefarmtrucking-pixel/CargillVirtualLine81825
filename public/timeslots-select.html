@@ -13,11 +13,31 @@
     .slot { padding:.75rem; border:1px solid #e5e5e5; border-radius:12px; text-align:center; background:#fff; cursor:pointer; }
     .slot:hover { outline: 2px solid #1e90ff22; }
     .note { color:#666; margin-top:.5rem; }
+    .meta { margin:.25rem 0 0; font-size:.9rem; color:#555; }
   </style>
+
+  <script>
+    // --- Require driver session ------------------------------------------------
+    function readCookie(name) {
+      return document.cookie.split(';')
+        .map(v => v.trim())
+        .find(v => v.startsWith(name + '='))?.split('=')[1] || null;
+    }
+
+    (function guard() {
+      const phone = readCookie('session_phone');
+      const role  = readCookie('session_role');
+      if (!phone || role !== 'driver') {
+        // Not logged in as driver: send to driver login
+        window.location.replace('driver-login.html');
+      }
+    })();
+  </script>
 </head>
 <body>
 <div class="wrap">
   <h2>Choose a Time</h2>
+  <div class="meta" id="who"></div>
 
   <div class="hdr">
     <label>Site
@@ -35,27 +55,45 @@
 </div>
 
 <script>
-const $=id=>document.getElementById(id);
-const api=p=>p;
+const $ = id => document.getElementById(id);
+const api = p => p;
+
+// show who (last 4 of phone) if available
+(function showDriver() {
+  const cookies = Object.fromEntries(document.cookie.split(';').map(s => s.trim().split('=')));
+  const phone = cookies['session_phone'] || '';
+  if (phone) {
+    const last4 = phone.slice(-4);
+    $('who').textContent = `Signed in as driver • ${last4 ? '•••' + last4 : ''}`;
+  }
+})();
 
 async function load(){
   const site = +$('site').value;
   const date = $('date').value || new Date().toISOString().slice(0,10);
   $('grid').innerHTML='Loading…';
-  const r = await fetch(api(`/api/sites/${site}/slots?date=${date}`));
-  const slots = await r.json().catch(()=>[]);
-  $('grid').innerHTML='';
-  if(!Array.isArray(slots) || slots.length===0){
-    $('grid').textContent='No open times.';
-    return;
+  try {
+    const r = await fetch(api(`/api/sites/${site}/slots?date=${encodeURIComponent(date)}`));
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const slots = await r.json().catch(()=>[]);
+    $('grid').innerHTML='';
+    if(!Array.isArray(slots) || slots.length===0){
+      $('grid').textContent='No open times.';
+      $('msg').textContent = '0 open times';
+      return;
+    }
+    for(const t of slots){
+      const div=document.createElement('div');
+      div.className='slot';
+      div.textContent=t;
+      div.onclick=()=>reserve(site, date, t);
+      $('grid').appendChild(div);
+    }
+    $('msg').textContent = `${slots.length} open times`;
+  } catch (e) {
+    $('grid').textContent = 'Failed to load times.';
+    $('msg').textContent = e.message || 'Error';
   }
-  for(const t of slots){
-    const div=document.createElement('div');
-    div.className='slot'; div.textContent=t;
-    div.onclick=()=>reserve(site, date, t);
-    $('grid').appendChild(div);
-  }
-  $('msg').textContent = `${slots.length} open times`;
 }
 
 async function reserve(site_id, date, slot_time){
@@ -76,7 +114,7 @@ async function reserve(site_id, date, slot_time){
       est_amount: Number(prompt('Estimated amount?')||'') || null,
       est_unit: 'BUSHELS',
       driver_phone: prompt('Mobile for confirmation (10 digits)?') || ''
-    }
+    };
     const c = await fetch(api('/api/slots/confirm'),{
       method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
     }).then(r=>r.json());
@@ -87,6 +125,7 @@ async function reserve(site_id, date, slot_time){
   }catch(e){ alert('Error: '+e.message); }
 }
 
+// init
 $('date').value = new Date().toISOString().slice(0,10);
 $('refresh').onclick = load;
 $('site').onchange = load;
