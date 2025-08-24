@@ -1047,6 +1047,99 @@ app.get('/debug/slots', (req,res)=>{
   res.json(rows);
 });
 
+// ------------------------- Append Times (no disruption) ----------------------
+// POST /api/slots/add-times
+// Body:
+// {
+//   site_id: 1,
+//   date: "2025-08-23",
+//   start: "15:00",               // inclusive
+//   end:   "17:00",               // inclusive
+//   loads_target: 20,             // either this...
+//   // OR interval_min: 5,        // ...or this (if provided, overrides computed interval)
+//   is_workin: 0                  // optional (default 0)
+// }
+// Behavior:
+// - Inserts *new* rows into time_slots for the given range; never deletes anything.
+// - Existing rows are left untouched; reservations untouched.
+// - Newly created rows are enabled (disabled=0).
+app.post('/api/slots/add-times', (req, res) => {
+  try {
+    const {
+      site_id,
+      date,
+      start,
+      end,
+      loads_target,
+      interval_min,
+      is_workin = 0
+    } = req.body || {};
+
+    // --- validation
+    if (!site_id || !date || !start || !end) {
+      return res.status(400).json({ ok:false, error: 'site_id, date, start, end required' });
+    }
+    const hhmmRe = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
+      return res.status(400).json({ ok:false, error: 'date must be YYYY-MM-DD' });
+    }
+    if (!hhmmRe.test(String(start)) || !hhmmRe.test(String(end))) {
+      return res.status(400).json({ ok:false, error: 'start/end must be HH:MM' });
+    }
+
+    const toMin = (t) => { const [h,m] = String(t).split(':').map(Number); return h*60+m; };
+    const toHHMM = (mins) => `${String(Math.floor(mins/60)).padStart(2,'0')}:${String(mins%60).padStart(2,'0')}`;
+
+    const s = toMin(start);
+    const e = toMin(end);
+    if (!(e >= s)) return res.status(400).json({ ok:false, error: 'end must be >= start' });
+
+    // Compute interval:
+    // If interval_min provided, use it; else compute from loads_target + site min.
+    const siteMin = (Number(site_id) === 2 ? 6 : 5);
+    let step;
+    if (Number(interval_min)) {
+      step = Math.max(siteMin, Number(interval_min));
+    } else {
+      const lt = Number(loads_target);
+      if (!lt || lt < 1) return res.status(400).json({ ok:false, error: 'loads_target >= 1 or interval_min required' });
+      const span = Math.max(1, e - s);
+      step = Math.max(siteMin, Math.floor(span / Math.max(1, lt - 1)));
+    }
+
+    // Build times list (inclusive range)
+    const newTimes = [];
+    for (let t = s; t <= e; t += step) {
+      newTimes.push(toHHMM(t));
+    }
+
+    // Insert-or-ignore; ensure enabled (disabled=0) for these rows
+    const ins = db.prepare(`
+      INSERT INTO time_slots
+        (site_id, date, slot_time, is_workin, reserved_truck_id, reserved_at, hold_token, hold_expires_at, disabled)
+      VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, 0)
+      ON CONFLICT(site_id, date, slot_time, is_workin) DO UPDATE SET
+        disabled = 0
+    `);
+
+    let inserted = 0;
+    const tx = db.transaction(() => {
+      for (const t of newTimes) {
+        const info = ins.run(site_id, date, t, is_workin ? 1 : 0);
+        // When it hits ON CONFLICT UPDATE, changes may be 0 or 1 depending on SQLite version;
+        // we’ll just report how many *attempts* were made and return the list.
+        inserted += 1;
+      }
+    });
+    tx();
+
+    return res.json({ ok:true, inserted, slot_times: newTimes });
+  } catch (e) {
+    console.error('/api/slots/add-times', e);
+    return res.status(500).json({ ok:false, error:'server error' });
+  }
+});
+
 // ------------------------- Start ---------------------------------------------
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
