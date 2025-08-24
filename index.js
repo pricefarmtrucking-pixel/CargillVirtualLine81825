@@ -253,9 +253,9 @@ app.post('/api/sites/:id/slots/preview', (req, res) => {
   }
 });
 
-// ------------------------- Schedule PUBLISH (overwrite) ----------------------
-// POST /api/sites/:id/schedule
-// Body: { date, open_time, close_time, loads_target, disabled_slots }
+// ------------------------- Schedule PUBLISH (overwrite open) -----------------
+// Body: { date, open_time, close_time, loads_target, disabled_loads }
+// disabled_loads = how many loads you want auto-disabled across the day
 app.post('/api/sites/:id/schedule', (req, res) => {
   const DEBUG = process.env.NODE_ENV !== 'production';
 
@@ -266,15 +266,15 @@ app.post('/api/sites/:id/schedule', (req, res) => {
       open_time = '',
       close_time = '',
       loads_target,
-      disabled_slots = 0
+      disabled_loads = 0    // <— NEW
     } = req.body || {};
 
-    // normalize + validate
+    // ---- normalize & validate ------------------------------------------------
     date = String(date || '').trim();
     open_time = String(open_time || '').trim();
     close_time = String(close_time || '').trim();
     loads_target = Number(loads_target);
-    disabled_slots = Number(disabled_slots) || 0;
+    disabled_loads = Math.max(0, Number(disabled_loads) || 0);
 
     const hhmmRe = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
     if (!site_id || !date || !open_time || !close_time || !loads_target) {
@@ -290,42 +290,38 @@ app.post('/api/sites/:id/schedule', (req, res) => {
       return res.status(400).json({ error: 'loads_target must be >= 1' });
     }
 
-    const toMin  = t => { const [h,m]=String(t).split(':').map(Number); return h*60+m; };
-    const toHHMM = mins => `${String(Math.floor(mins/60)).padStart(2,'0')}:${String(mins%60).padStart(2,'0')}`;
+    const toMin  = (t) => { const [h,m] = t.split(':').map(Number); return h*60+m; };
+    const toHHMM = (mins) => `${String(Math.floor(mins/60)).padStart(2,'0')}:${String(mins%60).padStart(2,'0')}`;
 
+    // EAST(1)=5, WEST(2)=6 min minimum
+    const minInt = site_id === 2 ? 6 : 5;
     const start  = toMin(open_time);
     const end    = toMin(close_time);
     if (!(end > start)) return res.status(400).json({ error: 'close must be after open' });
 
-    const minInt   = site_id === 2 ? 6 : 5;
     const span     = end - start;
     const interval = Math.max(minInt, Math.floor(span / Math.max(1, loads_target - 1)));
 
-    // Build target times
+    // Build the full day’s times (regular rows only, is_workin=0)
     const times = [];
     for (let i = 0; i < loads_target; i++) {
       const t = start + i * interval;
       if (t >= start && t <= end) times.push(toHHMM(t));
     }
 
-    // Decide which indices to disable (spread evenly)
-    const total = times.length;
-    let d = Math.max(0, Math.min(disabled_slots, Math.max(0, total - 1)));
-    const disabledIndex = new Set();
-    if (d > 0) {
-      const step = Math.max(2, Math.round(total / d)); // e.g., 80/10 = 8
-      let marked = 0;
-      for (let i = step - 1; i < total && marked < d; i += step) {
-        disabledIndex.add(i); marked++;
-      }
-      // top up if rounding left us short
-      for (let i = total - 1; marked < d && i >= 0; i--) {
-        if (!disabledIndex.has(i)) { disabledIndex.add(i); marked++; }
+    // Decide which to disable: spread `disabled_loads` across `loads_target`
+    // Example: 80 loads, disabled_loads=10 -> roughly every 8th gets disabled.
+    const disabledSet = new Set();
+    if (disabled_loads > 0 && times.length > 0) {
+      const stride = Math.max(1, Math.round(times.length / disabled_loads));
+      // mark every `stride`th index (1-based feel; adjust to taste)
+      for (let i = stride - 1; i < times.length && disabledSet.size < disabled_loads; i += stride) {
+        disabledSet.add(times[i]);
       }
     }
 
     const tx = db.transaction(() => {
-      // Settings (store workins_per_hour=0; we’re using disabled slots instead)
+      // 1) Save/update settings
       db.prepare(`
         INSERT INTO site_settings (site_id, date, loads_target, open_time, close_time, workins_per_hour)
         VALUES (?, ?, ?, ?, ?, 0)
@@ -337,59 +333,46 @@ app.post('/api/sites/:id/schedule', (req, res) => {
           updated_at       = CURRENT_TIMESTAMP
       `).run(site_id, date, loads_target, open_time, close_time);
 
-      // Clear holds for that day (keep reservations)
+      // 2) Remove ALL *open* rows for that day (keep any live reservations)
       db.prepare(`
-        UPDATE time_slots
-           SET hold_token=NULL, hold_expires_at=NULL
-         WHERE site_id=? AND date=?
+        DELETE FROM time_slots
+        WHERE site_id = ? AND date = ? AND (reserved_truck_id IS NULL OR reserved_truck_id = 0)
       `).run(site_id, date);
 
-      // Upsert target times with disabled flags
-      const upsert = db.prepare(`
-        INSERT INTO time_slots (site_id, date, slot_time, is_workin,
-                                reserved_truck_id, reserved_at, hold_token, hold_expires_at, disabled)
+      // 3) Clear any holds for the day (keeps reserved rows)
+      db.prepare(`
+        UPDATE time_slots
+           SET hold_token = NULL, hold_expires_at = NULL
+         WHERE site_id = ? AND date = ?
+      `).run(site_id, date);
+
+      // 4) Insert the new rows (regular only, is_workin=0), with disabled sprinkled in
+      const ins = db.prepare(`
+        INSERT INTO time_slots (site_id, date, slot_time, is_workin, reserved_truck_id, reserved_at, hold_token, hold_expires_at, disabled)
         VALUES (?, ?, ?, 0, NULL, NULL, NULL, NULL, ?)
         ON CONFLICT(site_id, date, slot_time, is_workin) DO UPDATE SET
           disabled = excluded.disabled
       `);
-      times.forEach((t, idx) => {
-        const dis = disabledIndex.has(idx) ? 1 : 0;
-        upsert.run(site_id, date, t, dis);
-      });
-
-      // Soft‑disable any *open* slots not in the new target list (don’t touch reserved)
-      if (times.length) {
-        const placeholders = times.map(() => '?').join(',');
-        db.prepare(`
-          UPDATE time_slots
-             SET disabled = 1
-           WHERE site_id = ?
-             AND date    = ?
-             AND is_workin = 0
-             AND (reserved_truck_id IS NULL OR reserved_truck_id = 0)
-             AND slot_time NOT IN (${placeholders})
-        `).run(site_id, date, ...times);
-      } else {
-        db.prepare(`
-          UPDATE time_slots
-             SET disabled = 1
-           WHERE site_id = ?
-             AND date    = ?
-             AND is_workin = 0
-             AND (reserved_truck_id IS NULL OR reserved_truck_id = 0)
-        `).run(site_id, date);
+      for (const t of times) {
+        ins.run(site_id, date, t, disabledSet.has(t) ? 1 : 0);
       }
     });
 
-    // execute the transaction
-    tx();
+    try { tx(); }
+    catch (sqlErr) {
+      console.error('SQL error in /api/sites/:id/schedule:', sqlErr);
+      return res.status(500).json({ error: DEBUG ? String(sqlErr) : 'server error' });
+    }
 
-    // success
-    return res.json({ ok: true, interval_min: interval });
-
-  } catch (sqlErr) {
-    console.error('SQL error in /api/sites/:id/schedule:', sqlErr);
-    return res.status(500).json({ error: (process.env.NODE_ENV !== 'production') ? String(sqlErr) : 'server error' });
+    return res.json({
+      ok: true,
+      interval_min: interval,
+      generated: times.length,
+      disabled_count: disabledSet.size
+    });
+  } catch (e) {
+    console.error('/api/sites/:id/schedule', e);
+    return res.status(500).json({ error: 'server error' });
   }
 });
 
