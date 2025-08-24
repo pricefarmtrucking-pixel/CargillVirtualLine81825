@@ -511,6 +511,154 @@ app.post('/api/slots/confirm', async (req, res) => {
 
   res.status(201).json({ ok:true, reservation_id: info.id, queue_code: probe });
 });
+// ------------------- Probe Upsert (create or edit reservation) -------------------
+// POST /api/slots/probe-upsert
+// Body:
+// {
+//   site_id: 1,
+//   date: "2025-08-23",
+//   slot_time: "07:14",
+//   reservation_id: 123,                // OPTIONAL: if provided, we edit; otherwise create
+//   driver_name: "...", license_plate:"...", vendor_name:"...",
+//   farm_or_ticket:"...", est_amount:1000, est_unit:"BUSHELS",
+//   driver_phone:"+15635551234",        // optional
+//   notify: true,                        // optional: send SMS
+//   reason: "Updated by probe"           // optional: added to SMS for updates
+// }
+app.post('/api/slots/probe-upsert', async (req, res) => {
+  try {
+    const {
+      site_id, date, slot_time, reservation_id,
+      driver_name, license_plate, vendor_name,
+      farm_or_ticket, est_amount, est_unit,
+      driver_phone, notify = false, reason = ''
+    } = req.body || {};
+
+    if (!site_id || !date || !slot_time) {
+      return res.status(400).json({ error: 'site_id, date, slot_time required' });
+    }
+
+    const normPhone = p => {
+      const d = String(p||'').replace(/\D/g,'');
+      if (/^\d{10}$/.test(d)) return '+1'+d;
+      if (/^1\d{10}$/.test(d)) return '+'+d;
+      if (/^\+1\d{10}$/.test(d)) return d;
+      return null;
+    };
+    const phoneNorm = normPhone(driver_phone);
+
+    // Helper: fetch time slot row
+    const slot = db.prepare(`
+      SELECT * FROM time_slots
+      WHERE site_id=? AND date=? AND slot_time=?
+    `).get(site_id, date, slot_time);
+
+    if (!slot) {
+      return res.status(404).json({ error: 'slot not found' });
+    }
+
+    // If creating a new reservation into an open slot, we need a probe code.
+    const newProbeCode = () => String(Math.floor(1000 + Math.random()*9000));
+
+    let created = false;
+    let updated = false;
+    let queue_code = null;
+    let resvId = reservation_id || null;
+
+    const tx = db.transaction(() => {
+      if (reservation_id) {
+        // UPDATE existing reservation (fields only)
+        const prev = db.prepare(`SELECT * FROM slot_reservations WHERE id=?`).get(reservation_id);
+        if (!prev) throw new Error('reservation not found');
+
+        db.prepare(`
+          UPDATE slot_reservations SET
+            driver_name = ?, license_plate = ?, vendor_name = ?,
+            farm_or_ticket = ?, est_amount = ?, est_unit = ?,
+            driver_phone = ?
+          WHERE id = ?
+        `).run(
+          driver_name || null,
+          license_plate || null,
+          vendor_name || null,
+          farm_or_ticket || null,
+          est_amount ?? null,
+          (est_unit || 'BUSHELS').toUpperCase(),
+          phoneNorm || null,
+          reservation_id
+        );
+
+        // keep queue_code
+        queue_code = prev.queue_code || null;
+        updated = true;
+
+        // ensure the time_slots row points to this reservation (in case it was open)
+        db.prepare(`
+          UPDATE time_slots
+             SET reserved_truck_id = ?
+           WHERE site_id=? AND date=? AND slot_time=? 
+        `).run(reservation_id, site_id, date, slot_time);
+      } else {
+        // CREATE new reservation if slot is open (not reserved)
+        if (slot.reserved_truck_id) throw new Error('slot already reserved');
+        const code = newProbeCode();
+
+        const info = db.prepare(`
+          INSERT INTO slot_reservations
+            (site_id, date, slot_time, driver_name, license_plate, vendor_name,
+             farm_or_ticket, est_amount, est_unit, driver_phone, queue_code, status)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?, 'reserved')
+          RETURNING id
+        `).get(
+          site_id, date, slot_time,
+          driver_name || null,
+          license_plate || null,
+          vendor_name || null,
+          farm_or_ticket || null,
+          est_amount ?? null,
+          (est_unit || 'BUSHELS').toUpperCase(),
+          phoneNorm || null,
+          code
+        );
+
+        // mark slot reserved
+        db.prepare(`
+          UPDATE time_slots
+             SET reserved_truck_id=?, reserved_at=CURRENT_TIMESTAMP,
+                 hold_token=NULL, hold_expires_at=NULL
+           WHERE id=?
+        `).run(info.id, slot.id);
+
+        resvId = info.id;
+        queue_code = code;
+        created = true;
+      }
+    });
+    tx();
+
+    // SMS (best‑effort)
+    if (notify && phoneNorm) {
+      try {
+        if (created) {
+          const body =
+            `Cargill: Confirmed ${date} at ${slot_time} (${site_id===1?'EAST':'WEST'}). ` +
+            `Probe code: ${queue_code}. Reply STOP to opt out.`;
+          await sendSMS(phoneNorm, body);
+        } else if (updated) {
+          const body =
+            `Cargill: Your ${date} ${slot_time} (${site_id===1?'EAST':'WEST'}) details were updated${reason?`: ${reason}`:''}.` +
+            (queue_code ? ` Probe code: ${queue_code}.` : '');
+          await sendSMS(phoneNorm, body);
+        }
+      } catch { /* ignore sms errors */ }
+    }
+
+    return res.json({ ok: true, reservation_id: resvId, created, updated, queue_code });
+  } catch (e) {
+    console.error('probe-upsert', e);
+    return res.status(500).json({ error: 'server error' });
+  }
+});
 
 // ------------------------- Cancel / Reassign ---------------------------------
 app.post('/api/slots/cancel', (req, res) => {
