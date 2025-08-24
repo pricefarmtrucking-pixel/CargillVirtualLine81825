@@ -59,15 +59,19 @@
 
     <div class="field">
       <label>Disabled loads (auto)</label>
-      <!-- server expects "disabled_loads" -->
       <input id="disabledLoads" type="text" inputmode="numeric" placeholder="10" />
+    </div>
+
+    <div class="field">
+      <label>Interval (min, optional)</label>
+      <input id="intervalMin" type="text" inputmode="numeric" placeholder="5" />
     </div>
 
     <button id="previewBtn" class="btn" type="button">Generate Slots</button>
     <button id="publishBtn" class="btn primary" type="button">Publish Schedule</button>
   </div>
 
-  <div id="msg" class="help">We’ll auto‑disable about every Nth slot to hit your disabled total (East≈5m, West≈6m min interval).</div>
+  <div id="msg" class="help">Set an Interval to override auto-spacing (min: East≈5m, West≈6m). Disabled loads are sprinkled evenly.</div>
 
   <div id="slots" class="grid" aria-live="polite"></div>
 
@@ -104,12 +108,12 @@
     const closeEl = $('close');
     const loadsEl = $('loads');
     const disabledEl = $('disabledLoads');
+    const intervalEl = $('intervalMin');
     const msgEl = $('msg');
     const gridEl = $('slots');
 
     attachHHMM(openEl); attachHHMM(closeEl);
 
-    // defaults
     (function init(){
       const d = new Date();
       d.setMinutes(d.getMinutes()-d.getTimezoneOffset());
@@ -118,6 +122,7 @@
       closeEl.value = '17:00';
       loadsEl.value = '80';
       disabledEl.value = '10';
+      intervalEl.value = ''; // blank means "auto"
     })();
 
     function showMessage(text, type='help') {
@@ -146,27 +151,6 @@
       return data;
     }
 
-    // compute fallback disabled flags if API preview doesn't include them
-    function applyDisabledFallback(items, disabledLoads) {
-      const list = items.map(x => ({ ...x })); // shallow copy
-      const need = Math.max(0, Number(disabledLoads) || 0);
-      if (!list.length || need <= 0) return list;
-      const already = list.filter(x => x.disabled).length;
-      if (already >= need) return list;
-
-      const stride = Math.max(1, Math.round(list.length / need));
-      let added = 0;
-      for (let i = stride - 1; i < list.length && (already + added) < need; i += stride) {
-        // don’t override any explicit true/false if it exists; only set when undefined/false
-        if (!list[i].disabled) {
-          list[i].disabled = true;
-          added++;
-        }
-      }
-      return list;
-    }
-
-    // values sent to server (note the "disabled_loads" key)
     function values() {
       const site_id = Number(siteEl.value);
       const date = dateEl.value;
@@ -174,7 +158,8 @@
       const close_time = normalizeHHMM(closeEl.value);
       const loads_target = Number(String(loadsEl.value).replace(/\D+/g,'')) || 0;
       const disabled_loads = Number(String(disabledEl.value).replace(/\D+/g,'')) || 0;
-      return { site_id, date, open_time, close_time, loads_target, disabled_loads };
+      const interval_min = Number(String(intervalEl.value).replace(/\D+/g,'')) || 0; // 0 = auto
+      return { site_id, date, open_time, close_time, loads_target, disabled_loads, interval_min };
     }
 
     async function preview() {
@@ -186,13 +171,9 @@
         }
         showMessage('Generating…');
         const res = await callJSON(`/api/sites/${v.site_id}/slots/preview`, v);
-
-        // Ensure disabled flags are present for display
-        const items = applyDisabledFallback(res.items || [], v.disabled_loads);
-        renderSlots(items);
-
-        const disabledCount = items.filter(s => s.disabled).length;
-        showMessage(`Generated ${items.length} slots; disabled ${disabledCount}. Interval ≈ ${res.interval_min} min.`);
+        renderSlots(res.items || []);
+        const disabledCount = (res.items || []).filter(s => s.disabled).length;
+        showMessage(`Generated ${res.items?.length ?? 0} slots; disabled ${disabledCount}. Interval ≈ ${res.interval_min} min.`);
       } catch (e) {
         showMessage(`Error: ${e.message || e}`, 'error');
       }
@@ -208,7 +189,6 @@
         showMessage('Publishing…');
         const res = await callJSON(`/api/sites/${v.site_id}/schedule`, v);
         showMessage(`Published. Interval ≈ ${res.interval_min} min.`, 'ok');
-        // Re-run preview to reflect what will be in DB
         await preview();
       } catch (e) {
         showMessage(`Error: ${e.message || e}`, 'error');
@@ -218,7 +198,6 @@
     document.getElementById('previewBtn').addEventListener('click', preview);
     document.getElementById('publishBtn').addEventListener('click', publishNow);
 
-    // Auto-preview on load
     preview();
   </script>
 </body>
