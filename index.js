@@ -205,33 +205,48 @@ app.post('/auth/verify', (req, res) => {
 });
 
 // ------------------------- Schedule PREVIEW (Generate Slots) -----------------
+// POST /api/sites/:id/slots/preview
+// Body: { date, open_time, close_time, loads_target, disabled_slots }
 app.post('/api/sites/:id/slots/preview', (req, res) => {
   try {
     const site_id = +req.params.id;
-    const { date, open_time, close_time, loads_target, workins_per_hour = 0 } = req.body || {};
+    const { date, open_time, close_time, loads_target, disabled_slots = 0 } = req.body || {};
     if (!site_id || !date || !open_time || !close_time || !loads_target)
       return res.status(400).json({ error:'missing fields' });
 
-    const minInt = site_id === 2 ? 6 : 5;
-    const start  = toMin(open_time);
-    const end    = toMin(close_time);
-    const span   = Math.max(1, end - start);
+    const toMin  = t => { const [h,m]=String(t).split(':').map(n=>+n); return h*60+m; };
+    const toHHMM = mins => `${String(Math.floor(mins/60)).padStart(2,'0')}:${String(mins%60).padStart(2,'0')}`;
+
+    const minInt   = site_id === 2 ? 6 : 5;          // WEST(2)=6m, EAST(1)=5m
+    const start    = toMin(open_time);
+    const end      = toMin(close_time);
+    const span     = Math.max(1, end - start);
     const interval = Math.max(minInt, Math.floor(span / Math.max(1, loads_target-1)));
 
-    const times = [];
+    // build regular times
+    const items = [];
     for (let i=0; i<loads_target; i++) {
       const t = start + i*interval;
-      if (t>=start && t<=end) times.push({ slot_time: toHHMM(t), is_workin: 0 });
-    }
-    if (workins_per_hour > 0) {
-      const step = Math.max(1, Math.floor(60/workins_per_hour));
-      for (let m=start; m<=end; m+=step) {
-        times.push({ slot_time: toHHMM(m), is_workin: 1 });
-      }
-      times.sort((a,b)=> toMin(a.slot_time)-toMin(b.slot_time));
+      if (t>=start && t<=end) items.push({ slot_time: toHHMM(t), disabled: 0 });
     }
 
-    res.json({ ok:true, interval_min: interval, items: times });
+    // choose which indices to disable (~every Nth)
+    const total = items.length;
+    let d = Math.max(0, Math.min(Number(disabled_slots)||0, total-1));
+    if (d > 0) {
+      const step = Math.max(2, Math.round(total / d)); // e.g., 80/10 = 8
+      let marked = 0;
+      for (let i = step-1; i < total && marked < d; i += step) {
+        items[i].disabled = 1;
+        marked++;
+      }
+      // if rounding left us short, mark a few from the end
+      for (let i = total-1; marked < d && i >= 0; i--) {
+        if (!items[i].disabled) { items[i].disabled = 1; marked++; }
+      }
+    }
+
+    res.json({ ok:true, interval_min: interval, items });
   } catch (e) {
     console.error('/api/sites/:id/slots/preview', e);
     res.status(500).json({ error:'server error' });
@@ -239,6 +254,8 @@ app.post('/api/sites/:id/slots/preview', (req, res) => {
 });
 
 // ------------------------- Schedule PUBLISH (overwrite) ----------------------
+// POST /api/sites/:id/schedule
+// Body: { date, open_time, close_time, loads_target, disabled_slots }
 app.post('/api/sites/:id/schedule', (req, res) => {
   const DEBUG = process.env.NODE_ENV !== 'production';
   try {
@@ -248,7 +265,7 @@ app.post('/api/sites/:id/schedule', (req, res) => {
       open_time = '',
       close_time = '',
       loads_target,
-      workins_per_hour = 0
+      disabled_slots = 0
     } = req.body || {};
 
     // normalize + validate
@@ -256,7 +273,7 @@ app.post('/api/sites/:id/schedule', (req, res) => {
     open_time = String(open_time || '').trim();
     close_time = String(close_time || '').trim();
     loads_target = Number(loads_target);
-    workins_per_hour = Number(workins_per_hour);
+    disabled_slots = Number(disabled_slots) || 0;
 
     const hhmmRe = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
     if (!site_id || !date || !open_time || !close_time || !loads_target) {
@@ -271,9 +288,9 @@ app.post('/api/sites/:id/schedule', (req, res) => {
     if (!Number.isFinite(loads_target) || loads_target < 1) {
       return res.status(400).json({ error: 'loads_target must be >= 1' });
     }
-    if (!Number.isFinite(workins_per_hour) || workins_per_hour < 0) {
-      return res.status(400).json({ error: 'workins_per_hour must be >= 0' });
-    }
+
+    const toMin  = t => { const [h,m]=String(t).split(':').map(Number); return h*60+m; };
+    const toHHMM = mins => `${String(Math.floor(mins/60)).padStart(2,'0')}:${String(mins%60).padStart(2,'0')}`;
 
     const start  = toMin(open_time);
     const end    = toMin(close_time);
@@ -283,59 +300,65 @@ app.post('/api/sites/:id/schedule', (req, res) => {
     const span     = end - start;
     const interval = Math.max(minInt, Math.floor(span / Math.max(1, loads_target - 1)));
 
-    const targetTimes = [];
+    // Build target times
+    const times = [];
     for (let i = 0; i < loads_target; i++) {
       const t = start + i * interval;
-      if (t >= start && t <= end) targetTimes.push(toHHMM(t));
+      if (t >= start && t <= end) times.push(toHHMM(t));
     }
 
-    const workinTimes = [];
-    if (workins_per_hour > 0) {
-      const step = Math.max(1, Math.floor(60 / workins_per_hour));
-      for (let m = start; m <= end; m += step) workinTimes.push(toHHMM(m));
+    // Decide which indices to disable
+    const total = times.length;
+    let d = Math.max(0, Math.min(disabled_slots, Math.max(0, total-1)));
+    const disabledIndex = new Set();
+    if (d > 0) {
+      const step = Math.max(2, Math.round(total / d));
+      let marked = 0;
+      for (let i = step-1; i < total && marked < d; i += step) {
+        disabledIndex.add(i);
+        marked++;
+      }
+      for (let i = total-1; marked < d && i >= 0; i--) {
+        if (!disabledIndex.has(i)) { disabledIndex.add(i); marked++; }
+      }
     }
 
     const tx = db.transaction(() => {
-      // settings
+      // 1) Save/update settings (we can store disabled count in workins_per_hour for now = 0)
       db.prepare(`
         INSERT INTO site_settings (site_id, date, loads_target, open_time, close_time, workins_per_hour)
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, 0)
         ON CONFLICT(site_id, date) DO UPDATE SET
           loads_target     = excluded.loads_target,
           open_time        = excluded.open_time,
           close_time       = excluded.close_time,
-          workins_per_hour = excluded.workins_per_hour,
+          workins_per_hour = 0,
           updated_at       = CURRENT_TIMESTAMP
-      `).run(site_id, date, loads_target, open_time, close_time, workins_per_hour);
+      `).run(site_id, date, loads_target, open_time, close_time);
 
-      // clear holds
+      // 2) Clear holds (keep reservations)
       db.prepare(`
         UPDATE time_slots
            SET hold_token=NULL, hold_expires_at=NULL
          WHERE site_id=? AND date=?
       `).run(site_id, date);
 
-      // insert/enable regular target times
-      const insReg = db.prepare(`
-        INSERT INTO time_slots (site_id, date, slot_time, is_workin, reserved_truck_id, reserved_at, hold_token, hold_expires_at, disabled)
-        VALUES (?, ?, ?, 0, NULL, NULL, NULL, NULL, 0)
+      // 3) Upsert the target times with desired disabled flags
+      const ins = db.prepare(`
+        INSERT INTO time_slots (site_id, date, slot_time, is_workin,
+                                reserved_truck_id, reserved_at, hold_token, hold_expires_at, disabled)
+        VALUES (?, ?, ?, 0, NULL, NULL, NULL, NULL, ?)
         ON CONFLICT(site_id, date, slot_time, is_workin) DO UPDATE SET
-          disabled = 0
+          disabled = excluded.disabled
       `);
-      for (const t of targetTimes) insReg.run(site_id, date, t);
+      times.forEach((t, idx) => {
+        const dis = disabledIndex.has(idx) ? 1 : 0;
+        ins.run(site_id, date, t, dis);
+      });
 
-      // insert work-ins (keep their disabled state if they already exist)
-      if (workinTimes.length) {
-        const insW = db.prepare(`
-          INSERT OR IGNORE INTO time_slots (site_id, date, slot_time, is_workin)
-          VALUES (?, ?, ?, 1)
-        `);
-        for (const t of workinTimes) insW.run(site_id, date, t);
-      }
-
-      // soft-disable any *open* regular slots not in the new target list
-      if (targetTimes.length) {
-        const placeholders = targetTimes.map(() => '?').join(',');
+      // 4) Soft‑disable any *open* regular slots not in the new target list
+      if (times.length) {
+        const placeholders = times.map(() => '?').join(',');
         db.prepare(`
           UPDATE time_slots
              SET disabled = 1
@@ -344,7 +367,7 @@ app.post('/api/sites/:id/schedule', (req, res) => {
              AND is_workin = 0
              AND (reserved_truck_id IS NULL OR reserved_truck_id = 0)
              AND slot_time NOT IN (${placeholders})
-        `).run(site_id, date, ...targetTimes);
+        `).run(site_id, date, ...times);
       } else {
         db.prepare(`
           UPDATE time_slots
@@ -356,6 +379,19 @@ app.post('/api/sites/:id/schedule', (req, res) => {
         `).run(site_id, date);
       }
     });
+
+    try { tx(); }
+    catch (sqlErr) {
+      console.error('SQL error in /api/sites/:id/schedule:', sqlErr);
+      return res.status(500).json({ error: DEBUG ? String(sqlErr) : 'server error' });
+    }
+
+    return res.json({ ok: true, interval_min: interval });
+  } catch (e) {
+    console.error('/api/sites/:id/schedule', e);
+    return res.status(500).json({ error: 'server error' });
+  }
+});
 
     try { tx(); }
     catch (sqlErr) {
