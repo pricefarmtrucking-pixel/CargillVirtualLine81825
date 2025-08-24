@@ -44,31 +44,29 @@
 
     <div class="field">
       <label>Open (HH:MM)</label>
-      <!-- TEXT instead of time wheel -->
       <input id="open" class="hhmm" type="text" inputmode="numeric" placeholder="07:00" autocomplete="off" />
     </div>
 
     <div class="field">
       <label>Close (HH:MM)</label>
-      <!-- TEXT instead of time wheel -->
       <input id="close" class="hhmm" type="text" inputmode="numeric" placeholder="17:00" autocomplete="off" />
     </div>
 
- <div class="field">
-  <label>Loads/day</label>
-  <input id="loads" type="text" inputmode="numeric" placeholder="80" />
-</div>
+    <div class="field">
+      <label>Loads/day</label>
+      <input id="loads" type="text" inputmode="numeric" placeholder="80" />
+    </div>
 
-<div class="field">
-  <label>Disabled slots</label>
-  <input id="disabled" type="text" inputmode="numeric" placeholder="10" />
-</div>
+    <div class="field">
+      <label>Disabled slots</label>
+      <input id="disabled" type="text" inputmode="numeric" placeholder="10" />
+    </div>
 
     <button id="previewBtn" class="btn" type="button">Generate Slots</button>
     <button id="publishBtn" class="btn primary" type="button">Publish Schedule</button>
   </div>
 
-  <div id="msg" class="help">Minimum interval auto-computed (East≈5m, West≈6m).</div>
+  <div id="msg" class="help">Minimum interval auto-computed (East≈5m, West≈6m). “Disabled slots” will auto-mark ~every Nth regular slot disabled.</div>
 
   <div id="slots" class="grid" aria-live="polite"></div>
 
@@ -77,30 +75,21 @@
     const HHMM_RE = /^([01]?\d|2[0-3]):[0-5]\d$/;
 
     function normalizeHHMM(raw) {
-      // Accept: "700" "07:00" "7 00" "7-00" "0700" etc. Normalize -> "07:00"
       if (!raw) return '';
       let s = String(raw).trim();
-
-      // Replace non-digits with nothing, then reinject colon
       const digits = s.replace(/\D+/g, '');
       if (digits.length === 4) {
         s = digits.slice(0, 2) + ':' + digits.slice(2);
       } else if (digits.length === 3) {
-        // e.g. "700" -> 7:00
         s = digits.slice(0, 1) + ':' + digits.slice(1).padStart(2, '0');
       } else if (digits.length === 1 || digits.length === 2) {
-        // treat as hour, add :00
         s = digits + ':00';
       } else if (digits.length === 0) {
         s = '';
       } else {
-        // If it already has a colon and matches, keep as-is
         if (HHMM_RE.test(s)) return s;
-        // fallback: try first 2 + rest
         s = digits.slice(0,2) + ':' + digits.slice(2,4);
       }
-
-      // zero-pad hour
       const m = s.match(/^(\d{1,2}):(\d{2})$/);
       if (!m) return s;
       const hh = String(Math.min(23, parseInt(m[1], 10))).padStart(2,'0');
@@ -114,9 +103,7 @@
         el.value = v;
         el.setCustomValidity(HHMM_RE.test(v) || v==='' ? '' : 'Enter HH:MM');
       });
-      el.addEventListener('input', () => {
-        el.setCustomValidity('');
-      });
+      el.addEventListener('input', () => el.setCustomValidity(''));
     }
 
     // --- UI elements ---------------------------------------------------------
@@ -125,7 +112,7 @@
     const openEl = document.getElementById('open');
     const closeEl = document.getElementById('close');
     const loadsEl = document.getElementById('loads');
-    const workinsEl = document.getElementById('workins');
+    const disabledEl = document.getElementById('disabled');
     const msgEl = document.getElementById('msg');
     const gridEl = document.getElementById('slots');
 
@@ -140,7 +127,7 @@
       openEl.value = '07:00';
       closeEl.value = '17:00';
       loadsEl.value = '80';
-      workinsEl.value = '0';
+      disabledEl.value = '10';
     })();
 
     function showMessage(text, type='help') {
@@ -178,8 +165,8 @@
       const open_time = normalizeHHMM(openEl.value);
       const close_time = normalizeHHMM(closeEl.value);
       const loads_target = Number(String(loadsEl.value).replace(/\D+/g,'')) || 0;
-      const workins_per_hour = Number(String(workinsEl.value).replace(/\D+/g,'')) || 0;
-      return { site_id, date, open_time, close_time, loads_target, workins_per_hour };
+      const disabled_slots = Number(String(disabledEl.value).replace(/\D+/g,'')) || 0;
+      return { site_id, date, open_time, close_time, loads_target, disabled_slots };
     }
 
     async function preview() {
@@ -190,7 +177,13 @@
           return;
         }
         showMessage('Generating…');
-        const res = await callJSON(`/api/sites/${v.site_id}/slots/preview`, v);
+        // Backend /slots/preview ignores disabled_slots (that’s ok for a quick preview)
+        const res = await callJSON(`/api/sites/${v.site_id}/slots/preview`, {
+          date: v.date,
+          open_time: v.open_time,
+          close_time: v.close_time,
+          loads_target: v.loads_target
+        });
         renderSlots(res.items || []);
         showMessage(`Generated ${res.items?.length ?? 0} slots. Interval ≈ ${res.interval_min} min.`);
       } catch (e) {
@@ -206,9 +199,8 @@
           return;
         }
         showMessage('Publishing…');
-        const res = await callJSON(`/api/sites/${v.site_id}/schedule`, v);
+        const res = await callJSON(`/api/sites/${v.site_id}/schedule`, v); // includes disabled_slots
         showMessage(`Published. Interval ≈ ${res.interval_min} min.`, 'ok');
-        // Refresh preview after publish
         await preview();
       } catch (e) {
         showMessage(`Error: ${e.message || e}`, 'error');
