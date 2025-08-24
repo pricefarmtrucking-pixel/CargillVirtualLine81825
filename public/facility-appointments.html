@@ -114,11 +114,10 @@
   const $ = sel => document.querySelector(sel);
   const tbody = $('#grid tbody');
   const msg = $('#msg');
-  let rows = [];           // raw from API
-  let selected = new Set(); // keys: `${slot_time}` for open rows OR `res:<id>` for reserved
+  let rows = [];
+  let selected = new Set(); // keys: `${slot_time}` for open OR `res:<id>` for reserved
 
   function setMsg(t, isErr=false){ msg.textContent=t||''; msg.className = isErr?'err':''; }
-
   function hhmmToMin(t){ const [h,m]=t.split(':').map(n=>+n); return h*60+m; }
 
   async function load() {
@@ -223,7 +222,7 @@
   $('#fromTime').addEventListener('change', render);
   $('#toTime').addEventListener('change', render);
 
-  // --- mass cancel (reserved only)
+  // --- mass cancel (reserved ONLY) — prompts for reason and notifies drivers
   $('#btnMassCancel').addEventListener('click', async ()=>{
     const { site_id, date } = ctx();
     const ids = Array.from(selected)
@@ -231,20 +230,20 @@
       .map(k => Number(k.split(':')[1]))
       .filter(Number.isInteger);
 
-    // also allow slot_times (open) to be removed — optional
-    const slot_times = Array.from(selected)
-      .filter(k => !k.startsWith('res:'));
+    if (!ids.length) return setMsg('Select reserved rows to cancel', true);
 
-    if (ids.length===0 && slot_times.length===0) return setMsg('Nothing selected to cancel', true);
+    const reason = window.prompt('Enter a reason for cancellation (optional):', '');
+    // If user clicks Cancel in the prompt, we stop to avoid accidental sends
+    if (reason === null) return;
 
     try{
       const r = await fetch('/api/slots/mass-cancel', {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ site_id, date, reservation_ids: ids, slot_times, notify:false })
+        body: JSON.stringify({ site_id, date, reservation_ids: ids, notify: true, reason: (reason||'') })
       });
       const j = await r.json();
       if(!r.ok || j.error) throw new Error(j.error || r.statusText);
-      setMsg(`Canceled: ${j.canceled || 0}, removed open: ${j.removed_open || 0}`);
+      setMsg(`Canceled ${j.canceled || 0} reservation(s). ${j.notified || 0} driver(s) notified.`);
       selected.clear(); $('#checkAll').checked=false;
       await load();
     }catch(e){ setMsg('Mass cancel failed: '+(e?.message||e), true); }
