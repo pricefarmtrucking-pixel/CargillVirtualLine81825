@@ -251,7 +251,6 @@ app.post('/api/sites/:id/schedule', (req, res) => {
 
   try {
     const site_id = Number(req.params.id);
-    // Force the types we need and trim strings
     let {
       date,
       open_time = '',
@@ -260,14 +259,14 @@ app.post('/api/sites/:id/schedule', (req, res) => {
       workins_per_hour = 0
     } = req.body || {};
 
+    // ---- normalize & validate ------------------------------------------------
     date = String(date || '').trim();
     open_time = String(open_time || '').trim();
     close_time = String(close_time || '').trim();
     loads_target = Number(loads_target);
     workins_per_hour = Number(workins_per_hour);
 
-    // Validate inputs
-    const hhmmRe = /^(?:[01]\d|2[0-3]):[0-5]\d$/; // HH:MM 00–23:00–59
+    const hhmmRe = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
     if (!site_id || !date || !open_time || !close_time || !loads_target) {
       return res.status(400).json({ error: 'missing fields' });
     }
@@ -284,30 +283,36 @@ app.post('/api/sites/:id/schedule', (req, res) => {
       return res.status(400).json({ error: 'workins_per_hour must be >= 0' });
     }
 
-    // EAST(1)=5 min, WEST(2)=6 min minimum
+    const toMin = (t) => { const [h,m] = t.split(':').map(Number); return h*60+m; };
+    const toHHMM = (mins) => `${String(Math.floor(mins/60)).padStart(2,'0')}:${String(mins%60).padStart(2,'0')}`;
+
+    // EAST(1)=5, WEST(2)=6 min minimum
     const minInt = site_id === 2 ? 6 : 5;
-    const toMin = (t) => {
-      const [h, m] = t.split(':').map(n => Number(n));
-      return h * 60 + m;
-    };
-    const toHHMM = (mins) => {
-      const h = String(Math.floor(mins / 60)).padStart(2, '0');
-      const m = String(mins % 60).padStart(2, '0');
-      return `${h}:${m}`;
-    };
+    const start  = toMin(open_time);
+    const end    = toMin(close_time);
+    if (!(end > start)) return res.status(400).json({ error: 'close must be after open' });
 
-    const start = toMin(open_time);
-    const end   = toMin(close_time);
-    if (!(end > start)) {
-      return res.status(400).json({ error: 'close must be after open' });
-    }
-
-    const span = end - start;
-    // Place first load at open_time, last load before/at close_time
+    const span     = end - start;
     const interval = Math.max(minInt, Math.floor(span / Math.max(1, loads_target - 1)));
 
+    // Build target list of regular times
+    const targetTimes = [];
+    for (let i = 0; i < loads_target; i++) {
+      const t = start + i * interval;
+      if (t >= start && t <= end) targetTimes.push(toHHMM(t));
+    }
+
+    // Optional work-ins (don’t *enable* them by default; they are stored with is_workin=1)
+    const workinTimes = [];
+    if (workins_per_hour > 0) {
+      const step = Math.max(1, Math.floor(60 / workins_per_hour));
+      for (let m = start; m <= end; m += step) {
+        workinTimes.push(toHHMM(m));
+      }
+    }
+
     const tx = db.transaction(() => {
-      // Save/update settings
+      // 1) Save/update settings
       db.prepare(`
         INSERT INTO site_settings (site_id, date, loads_target, open_time, close_time, workins_per_hour)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -319,43 +324,55 @@ app.post('/api/sites/:id/schedule', (req, res) => {
           updated_at       = CURRENT_TIMESTAMP
       `).run(site_id, date, loads_target, open_time, close_time, workins_per_hour);
 
-      // Remove ONLY non-reserved rows for that day (keep any live reservations)
-      db.prepare(`
-        DELETE FROM time_slots
-        WHERE site_id = ? AND date = ? AND (reserved_truck_id IS NULL OR reserved_truck_id = 0)
-      `).run(site_id, date);
-
-      // Clear holds for the day (keeps reserved rows)
+      // 2) Clear any holds for the day (keep reservations)
       db.prepare(`
         UPDATE time_slots
-        SET hold_token = NULL, hold_expires_at = NULL
-        WHERE site_id = ? AND date = ?
+           SET hold_token=NULL, hold_expires_at=NULL
+         WHERE site_id=? AND date=?
       `).run(site_id, date);
 
-      // Insert regular slots
-      const ins = db.prepare(`
-        INSERT OR IGNORE INTO time_slots (site_id, date, slot_time, is_workin)
-        VALUES (?, ?, ?, 0)
+      // 3) Insert/enable regular target times (is_workin=0, disabled=0)
+      const insReg = db.prepare(`
+        INSERT INTO time_slots (site_id, date, slot_time, is_workin, reserved_truck_id, reserved_at, hold_token, hold_expires_at, disabled)
+        VALUES (?, ?, ?, 0, NULL, NULL, NULL, NULL, 0)
+        ON CONFLICT(site_id, date, slot_time, is_workin) DO UPDATE SET
+          disabled = 0
       `);
+      for (const t of targetTimes) insReg.run(site_id, date, t);
 
-      for (let i = 0; i < loads_target; i++) {
-        const t = start + i * interval;
-        if (t >= start && t <= end) {
-          ins.run(site_id, date, toHHMM(t));
-        }
-      }
-
-      // Optional work-ins (even spacing within each hour)
-      if (workins_per_hour > 0) {
-        const step = Math.max(1, Math.floor(60 / workins_per_hour));
+      // 4) Insert (or keep) work‑ins as present. We don’t force-enable them;
+      //    they keep their current disabled state unless newly created (defaults to disabled=0).
+      if (workinTimes.length) {
         const insW = db.prepare(`
           INSERT OR IGNORE INTO time_slots (site_id, date, slot_time, is_workin)
           VALUES (?, ?, ?, 1)
         `);
-        // Generate across the open–close window
-        for (let m = start; m <= end; m += step) {
-          insW.run(site_id, date, toHHMM(m));
-        }
+        for (const t of workinTimes) insW.run(site_id, date, t);
+      }
+
+      // 5) Soft‑disable any *open* regular slots not in the new target list.
+      //    (Do NOT touch reserved ones; do NOT touch work‑ins.)
+      if (targetTimes.length) {
+        const placeholders = targetTimes.map(() => '?').join(',');
+        db.prepare(`
+          UPDATE time_slots
+             SET disabled = 1
+           WHERE site_id = ?
+             AND date    = ?
+             AND is_workin = 0
+             AND (reserved_truck_id IS NULL OR reserved_truck_id = 0)
+             AND slot_time NOT IN (${placeholders})
+        `).run(site_id, date, ...targetTimes);
+      } else {
+        // If somehow no target times, disable all *open* regular slots
+        db.prepare(`
+          UPDATE time_slots
+             SET disabled = 1
+           WHERE site_id = ?
+             AND date    = ?
+             AND is_workin = 0
+             AND (reserved_truck_id IS NULL OR reserved_truck_id = 0)
+        `).run(site_id, date);
       }
     });
 
