@@ -205,47 +205,51 @@ app.post('/auth/verify', (req, res) => {
 });
 
 // ------------------------- Schedule PREVIEW (Generate Slots) -----------------
-// POST /api/sites/:id/slots/preview
-// Body: { date, open_time, close_time, loads_target, disabled_slots }
 app.post('/api/sites/:id/slots/preview', (req, res) => {
   try {
     const site_id = +req.params.id;
-    const { date, open_time, close_time, loads_target, disabled_slots = 0 } = req.body || {};
-    if (!site_id || !date || !open_time || !close_time || !loads_target)
-      return res.status(400).json({ error:'missing fields' });
+    const {
+      date,
+      open_time,
+      close_time,
+      loads_target,
+      disabled_loads = 0
+    } = req.body || {};
 
-    const toMin  = t => { const [h,m]=String(t).split(':').map(n=>+n); return h*60+m; };
+    if (!site_id || !date || !open_time || !close_time || !loads_target) {
+      return res.status(400).json({ error:'missing fields' });
+    }
+
+    const toMin  = t => { const [h,m] = String(t).split(':').map(Number); return h*60+m; };
     const toHHMM = mins => `${String(Math.floor(mins/60)).padStart(2,'0')}:${String(mins%60).padStart(2,'0')}`;
 
-    const minInt   = site_id === 2 ? 6 : 5;          // WEST(2)=6m, EAST(1)=5m
-    const start    = toMin(open_time);
-    const end      = toMin(close_time);
-    const span     = Math.max(1, end - start);
-    const interval = Math.max(minInt, Math.floor(span / Math.max(1, loads_target-1)));
+    const minInt = site_id === 2 ? 6 : 5;
+    const start  = toMin(open_time);
+    const end    = toMin(close_time);
+    if (!(end > start)) return res.status(400).json({ error: 'close must be after open' });
 
-    // build regular times
-    const items = [];
-    for (let i=0; i<loads_target; i++) {
+    const span     = end - start;
+    const interval = Math.max(minInt, Math.floor(span / Math.max(1, loads_target - 1)));
+
+    // build all times
+    const times = [];
+    for (let i = 0; i < loads_target; i++) {
       const t = start + i*interval;
-      if (t>=start && t<=end) items.push({ slot_time: toHHMM(t), disabled: 0 });
+      if (t >= start && t <= end) times.push(toHHMM(t));
     }
 
-    // choose which indices to disable (~every Nth)
-    const total = items.length;
-    let d = Math.max(0, Math.min(Number(disabled_slots)||0, total-1));
-    if (d > 0) {
-      const step = Math.max(2, Math.round(total / d)); // e.g., 80/10 = 8
-      let marked = 0;
-      for (let i = step-1; i < total && marked < d; i += step) {
-        items[i].disabled = 1;
-        marked++;
-      }
-      // if rounding left us short, mark a few from the end
-      for (let i = total-1; marked < d && i >= 0; i--) {
-        if (!items[i].disabled) { items[i].disabled = 1; marked++; }
+    // decide which are disabled
+    const disabledSet = new Set();
+    const nDisable = Math.max(0, Number(disabled_loads) || 0);
+    if (nDisable > 0 && times.length > 0) {
+      const stride = Math.max(1, Math.round(times.length / nDisable));
+      for (let i = stride - 1; i < times.length && disabledSet.size < nDisable; i += stride) {
+        disabledSet.add(times[i]);
       }
     }
 
+    // return with flags so the UI can highlight
+    const items = times.map(t => ({ slot_time: t, disabled: disabledSet.has(t) }));
     res.json({ ok:true, interval_min: interval, items });
   } catch (e) {
     console.error('/api/sites/:id/slots/preview', e);
