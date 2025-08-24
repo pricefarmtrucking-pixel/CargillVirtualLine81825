@@ -1,1 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Driver Login — Cargill Soybean</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
+    .wrap { max-width: 480px; margin: 6vh auto; padding: 0 16px; }
+    .card { border:1px solid #ddd; border-radius:12px; padding:1.25rem; background:#fff; box-shadow: 0 2px 12px rgba(0,0,0,.04); }
+    h1 { font-size:1.25rem; margin:0 0 .5rem; }
+    p.note { color:#666; margin:.25rem 0 1rem; }
+    label { display:block; font-size:.9rem; margin:.65rem 0 .35rem; color:#444; }
+    input[type="tel"], input[type="text"] {
+      width:100%; padding:.7rem .8rem; border:1px solid #ccc; border-radius:10px; font-size:1rem;
+    }
+    .row { display:flex; gap:.5rem; align-items:center; }
+    .btn { padding:.65rem .9rem; border:1px solid #ccc; border-radius:10px; background:#f7f7f7; cursor:pointer; }
+    .btn.primary { background:#1e90ff; border-color:#1e90ff; color:#fff; }
+    .btn:disabled { opacity:.6; cursor:not-allowed; }
+    .help { font-size:.9rem; color:#666; margin-top:.35rem; }
+    .error { color:#b00020; margin-top:.35rem; }
+    .ok    { color:#0a7d26; margin-top:.35rem; }
+    .muted { color:#777; font-size:.9rem; }
+    .center { text-align:center; }
+    .right { text-align:right; }
+    .link { color:#1e90ff; text-decoration:none; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Driver Login</h1>
+    <p class="note">Enter your mobile number and we’ll text you a 6‑digit code.</p>
 
+    <div id="step1">
+      <label>Mobile Number</label>
+      <input id="phone" type="tel" inputmode="tel" placeholder="(555) 555‑5555"/>
+      <div class="row" style="margin-top:.75rem; justify-content:space-between;">
+        <a class="link" href="index.html">← Back</a>
+        <button id="sendBtn" class="btn primary">Send Code</button>
+      </div>
+      <div id="m1" class="help"></div>
+    </div>
+
+    <div id="step2" style="display:none;">
+      <label>Enter Code</label>
+      <input id="code" type="text" inputmode="numeric" placeholder="6‑digit code" maxlength="6"/>
+      <div class="row" style="margin-top:.75rem; justify-content:space-between;">
+        <button id="resendBtn" class="btn" disabled>Resend (<span id="secs">30</span>s)</button>
+        <button id="verifyBtn" class="btn primary">Verify & Continue</button>
+      </div>
+      <div id="m2" class="help"></div>
+    </div>
+  </div>
+  <p class="center muted" style="margin-top:.75rem;">By continuing you agree to receive a one‑time text message for verification.</p>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function normPhone(p) {
+  const d = String(p||'').replace(/\D/g,'');
+  if (/^\d{10}$/.test(d)) return '+1' + d;
+  if (/^1\d{10}$/.test(d)) return '+' + d;
+  if (/^\+1\d{10}$/.test(d)) return d;
+  return null;
+}
+
+function nextUrl() {
+  const u = new URL(window.location.href);
+  return u.searchParams.get('next') || 'timeslots-select.html';
+}
+
+let countdown = 30, timer = null;
+
+function startTimer() {
+  $('resendBtn').disabled = true;
+  $('secs').textContent = String(countdown);
+  timer = setInterval(() => {
+    countdown -= 1;
+    $('secs').textContent = String(countdown);
+    if (countdown <= 0) {
+      clearInterval(timer);
+      $('resendBtn').disabled = false;
+      $('secs').textContent = '0';
+    }
+  }, 1000);
+}
+
+async function requestCode() {
+  $('m1').className = 'help';
+  $('m1').textContent = 'Sending…';
+  const phone = normPhone($('phone').value);
+  if (!phone) {
+    $('m1').className = 'error';
+    $('m1').textContent = 'Please enter a valid US mobile number.';
+    return;
+  }
+  try {
+    const r = await fetch('/auth/request-code', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ phone, role:'driver' })
+    });
+    const data = await r.json().catch(()=>({}));
+    if (!r.ok || data.error) throw new Error(data.error || ('HTTP '+r.status));
+
+    $('m1').className = 'ok';
+    $('m1').textContent = 'Code sent. Check your messages.';
+    $('step1').style.display = 'none';
+    $('step2').style.display = '';
+    countdown = 30;
+    startTimer();
+  } catch (e) {
+    $('m1').className = 'error';
+    $('m1').textContent = e.message || 'Failed to send code.';
+  }
+}
+
+async function resendCode() {
+  // Allow resend after timer unlocks
+  if ($('resendBtn').disabled) return;
+  await requestCode();
+}
+
+async function verifyCode() {
+  $('m2').className = 'help';
+  $('m2').textContent = 'Verifying…';
+  const phone = normPhone($('phone').value);
+  const code  = String(($('code').value||'').trim());
+  if (!phone || !/^\d{6}$/.test(code)) {
+    $('m2').className = 'error';
+    $('m2').textContent = 'Enter the 6‑digit code exactly.';
+    return;
+  }
+  try {
+    const r = await fetch('/auth/verify', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ phone, code, role:'driver' })
+    });
+    const data = await r.json().catch(()=>({}));
+    if (!r.ok || data.error) throw new Error(data.error || ('HTTP '+r.status));
+
+    // Server sets cookies session_phone + session_role=driver on success.
+    $('m2').className = 'ok';
+    $('m2').textContent = 'Success! Redirecting…';
+    // small delay feels nice
+    setTimeout(()=> window.location.replace(nextUrl()), 300);
+  } catch (e) {
+    $('m2').className = 'error';
+    $('m2').textContent = e.message || 'Verification failed.';
+  }
+}
+
+$('sendBtn').addEventListener('click', requestCode);
+$('resendBtn').addEventListener('click', resendCode);
+$('verifyBtn').addEventListener('click', verifyCode);
+
+// Quick enter key support on code box
+$('code').addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter') verifyCode();
+});
+</script>
+</body>
+</html>
