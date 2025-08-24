@@ -675,6 +675,96 @@ app.post('/api/slots/disable', (req, res) => {
   }
 });
 
+// ------------------------- Admin: create (reserve) a slot --------------------
+// POST /api/admin/reserve
+// Body: { site_id, date, slot_time, driver_name?, license_plate?, vendor_name?,
+//         farm_or_ticket?, est_amount?, est_unit?, driver_phone?, queue_code? }
+app.post('/api/admin/reserve', (req, res) => {
+  try {
+    const {
+      site_id, date, slot_time,
+      driver_name, license_plate, vendor_name,
+      farm_or_ticket, est_amount, est_unit, driver_phone, queue_code
+    } = req.body || {};
+
+    if (!site_id || !date || !slot_time) {
+      return res.status(400).json({ error: 'site_id, date, slot_time required' });
+    }
+
+    // Ensure slot exists and is not disabled/reserved
+    const slot = db.prepare(`
+      SELECT * FROM time_slots
+      WHERE site_id=? AND date=? AND slot_time=? AND (disabled IS NULL OR disabled=0)
+    `).get(site_id, date, slot_time);
+
+    if (!slot) return res.status(404).json({ error: 'slot not found or disabled' });
+    if (slot.reserved_truck_id) return res.status(409).json({ error: 'slot already reserved' });
+
+    const probe = queue_code || String(Math.floor(1000 + Math.random()*9000));
+
+    const info = db.prepare(`
+      INSERT INTO slot_reservations
+        (site_id,date,slot_time,driver_name,license_plate,vendor_name,
+         farm_or_ticket,est_amount,est_unit,driver_phone,queue_code,status)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?, 'reserved')
+      RETURNING id
+    `).get(
+      slot.site_id, slot.date, slot.slot_time,
+      driver_name || null, license_plate || null, vendor_name || null,
+      farm_or_ticket || null, est_amount || null, (est_unit || 'BUSHELS').toUpperCase(),
+      normPhone(driver_phone) || null, probe
+    );
+
+    db.prepare(`
+      UPDATE time_slots
+         SET reserved_truck_id=?, reserved_at=CURRENT_TIMESTAMP,
+             hold_token=NULL, hold_expires_at=NULL
+       WHERE id=?
+    `).run(info.id, slot.id);
+
+    return res.status(201).json({ ok: true, reservation_id: info.id, queue_code: probe });
+  } catch (e) {
+    console.error('/api/admin/reserve', e);
+    res.status(500).json({ error: 'server error' });
+  }
+});
+
+// ------------------------- Admin: update reservation fields ------------------
+// POST /api/admin/update-reservation
+// Body: { reservation_id, driver_name?, license_plate?, vendor_name?, farm_or_ticket?,
+//         est_amount?, est_unit?, driver_phone? }
+app.post('/api/admin/update-reservation', (req, res) => {
+  try {
+    const {
+      reservation_id, driver_name, license_plate, vendor_name,
+      farm_or_ticket, est_amount, est_unit, driver_phone
+    } = req.body || {};
+    if (!reservation_id) return res.status(400).json({ error: 'reservation_id required' });
+
+    const setParts = [];
+    const vals = [];
+    const push = (col, val) => { setParts.push(`${col}=?`); vals.push(val); };
+
+    if (driver_name !== undefined)   push('driver_name', driver_name || null);
+    if (license_plate !== undefined) push('license_plate', license_plate || null);
+    if (vendor_name !== undefined)   push('vendor_name', vendor_name || null);
+    if (farm_or_ticket !== undefined)push('farm_or_ticket', farm_or_ticket || null);
+    if (est_amount !== undefined)    push('est_amount', est_amount ?? null);
+    if (est_unit !== undefined)      push('est_unit', (est_unit || 'BUSHELS').toUpperCase());
+    if (driver_phone !== undefined)  push('driver_phone', driver_phone ? normPhone(driver_phone) : null);
+
+    if (!setParts.length) return res.json({ ok: true, updated: 0 });
+
+    const sql = `UPDATE slot_reservations SET ${setParts.join(', ')} WHERE id=?`;
+    vals.push(reservation_id);
+    const info = db.prepare(sql).run(...vals);
+    return res.json({ ok: true, updated: info.changes });
+  } catch (e) {
+    console.error('/api/admin/update-reservation', e);
+    res.status(500).json({ error: 'server error' });
+  }
+});
+
 // ------------------------- Health / Debug ------------------------------------
 app.get('/healthz', (_req, res) => res.json({ ok:true }));
 app.get('/debug/env', (_req, res) => {
