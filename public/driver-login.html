@@ -11,17 +11,18 @@
     h1 { font-size:1.25rem; margin:0 0 .5rem; }
     p.note { color:#666; margin:.25rem 0 1rem; }
     label { display:block; font-size:.9rem; margin:.65rem 0 .35rem; color:#444; }
-    input[type="tel"], input[type="text"] { width:100%; padding:.7rem .8rem; border:1px solid #ccc; border-radius:10px; font-size:1rem; }
+    input[type="tel"], input[type="text"] {
+      width:100%; padding:.7rem .8rem; border:1px solid #ccc; border-radius:10px; font-size:1rem;
+    }
     .row { display:flex; gap:.5rem; align-items:center; }
     .btn { padding:.65rem .9rem; border:1px solid #ccc; border-radius:10px; background:#f7f7f7; cursor:pointer; }
     .btn.primary { background:#1e90ff; border-color:#1e90ff; color:#fff; }
     .btn:disabled { opacity:.6; cursor:not-allowed; }
-    .help { font-size:.9rem; color:#666; margin-top:.35rem; }
-    .error { color:#b00020; margin-top:.35rem; }
-    .ok    { color:#0a7d26; margin-top:.35rem; }
+    .help { font-size:.9rem; color:#666; margin-top:.35rem; min-height:1.2em; }
+    .error { color:#b00020; }
+    .ok    { color:#0a7d26; }
     .muted { color:#777; font-size:.9rem; }
     .center { text-align:center; }
-    .right { text-align:right; }
     .link { color:#1e90ff; text-decoration:none; }
   </style>
 </head>
@@ -52,22 +53,19 @@
     </div>
   </div>
 
-  <!-- NEW: manage link -->
   <p class="center muted" style="margin-top:.75rem;">
-    Want to edit or view a reservation?  
-    <a class="link" href="driver-manage.html">Manage reservation with your Probe Code</a>
+    Already booked? <a class="link" href="driver-manage.html">Manage reservation</a>
   </p>
-
-  <p class="center muted" style="margin-top:.75rem;">By continuing you agree to receive a one‑time text message for verification.</p>
 </div>
 
 <script>
 const $ = (id) => document.getElementById(id);
 
+// Normalize to E.164 +1XXXXXXXXXX; returns null if not a 10-digit US number
 function normPhone(p) {
-  const d = String(p||'").replace(/\D/g,'');
-  if (/^\d{10}$/.test(d)) return '+1'+d;
-  if (/^1\d{10}$/.test(d)) return '+'+d;
+  const d = String(p||'').replace(/\D/g,'');
+  if (/^\d{10}$/.test(d)) return '+1' + d;
+  if (/^1\d{10}$/.test(d)) return '+' + d;
   if (/^\+1\d{10}$/.test(d)) return d;
   return null;
 }
@@ -84,44 +82,103 @@ function startTimer() {
   timer = setInterval(() => {
     countdown -= 1;
     $('secs').textContent = String(countdown);
-    if (countdown <= 0) { clearInterval(timer); $('resendBtn').disabled = false; $('secs').textContent = '0'; }
+    if (countdown <= 0) {
+      clearInterval(timer);
+      $('resendBtn').disabled = false;
+      $('secs').textContent = '0';
+    }
   }, 1000);
 }
 
 async function requestCode() {
-  $('m1').className = 'help'; $('m1').textContent = 'Sending…';
   const phone = normPhone($('phone').value);
-  if (!phone) { $('m1').className='error'; $('m1').textContent='Please enter a valid US mobile number.'; return; }
+  $('m1').className = 'help';
+  $('m1').textContent = '';
+
+  if (!phone) {
+    $('m1').className = 'help error';
+    $('m1').textContent = 'Please enter a valid US mobile number (10 digits).';
+    return;
+  }
+
   try {
-    const r = await fetch('/auth/request-code',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,role:'driver'})});
+    $('sendBtn').disabled = true;
+    $('m1').textContent = 'Sending…';
+    const r = await fetch('/auth/request-code', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ phone, role:'driver' })
+    });
     const data = await r.json().catch(()=>({}));
-    if (!r.ok || data.error) throw new Error(data.error || ('HTTP '+r.status));
-    $('m1').className='ok'; $('m1').textContent='Code sent. Check your messages.';
-    $('step1').style.display='none'; $('step2').style.display='';
-    countdown = 30; startTimer();
-  } catch (e) { $('m1').className='error'; $('m1').textContent = e.message || 'Failed to send code.'; }
+    console.log('request-code response', r.status, data);
+
+    if (!r.ok || data.error) {
+      throw new Error(data.error || ('HTTP '+r.status));
+    }
+
+    // Proceed to step 2 even if SMS is mocked (ok:true, sent:false)
+    $('m1').className = 'help ok';
+    $('m1').textContent = data.sms?.sent ? 'Code sent. Check your messages.' : 'Test mode: code sent (mock).';
+    $('step1').style.display = 'none';
+    $('step2').style.display = '';
+    countdown = 30;
+    startTimer();
+  } catch (e) {
+    console.error('request-code error', e);
+    $('m1').className = 'help error';
+    $('m1').textContent = e.message || 'Failed to send code.';
+  } finally {
+    $('sendBtn').disabled = false;
+  }
 }
 
-async function resendCode(){ if(!$('resendBtn').disabled){ await requestCode(); } }
+async function resendCode() {
+  if ($('resendBtn').disabled) return;
+  await requestCode();
+}
 
-async function verifyCode(){
-  $('m2').className='help'; $('m2').textContent='Verifying…';
+async function verifyCode() {
   const phone = normPhone($('phone').value);
   const code  = String(($('code').value||'').trim());
-  if (!phone || !/^\d{6}$/.test(code)) { $('m2').className='error'; $('m2').textContent='Enter the 6‑digit code exactly.'; return; }
-  try{
-    const r = await fetch('/auth/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone, code, role:'driver'})});
+  $('m2').className = 'help';
+  $('m2').textContent = '';
+
+  if (!phone || !/^\d{6}$/.test(code)) {
+    $('m2').className = 'help error';
+    $('m2').textContent = 'Enter the 6‑digit code exactly.';
+    return;
+  }
+
+  try {
+    $('verifyBtn').disabled = true;
+    $('m2').textContent = 'Verifying…';
+    const r = await fetch('/auth/verify', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ phone, code, role:'driver' })
+    });
     const data = await r.json().catch(()=>({}));
+    console.log('verify response', r.status, data);
+
     if (!r.ok || data.error) throw new Error(data.error || ('HTTP '+r.status));
-    $('m2').className='ok'; $('m2').textContent='Success! Redirecting…';
-    setTimeout(()=>window.location.replace(nextUrl()),300);
-  }catch(e){ $('m2').className='error'; $('m2').textContent=e.message || 'Verification failed.'; }
+
+    $('m2').className = 'help ok';
+    $('m2').textContent = 'Success! Redirecting…';
+    setTimeout(()=> window.location.replace(nextUrl()), 300);
+  } catch (e) {
+    console.error('verify error', e);
+    $('m2').className = 'help error';
+    $('m2').textContent = e.message || 'Verification failed.';
+  } finally {
+    $('verifyBtn').disabled = false;
+  }
 }
 
-$('sendBtn').onclick=requestCode;
-$('resendBtn').onclick=resendCode;
-$('verifyBtn').onclick=verifyCode;
-$('code').addEventListener('keydown',ev=>{ if(ev.key==='Enter') verifyCode(); });
+$('sendBtn').addEventListener('click', requestCode);
+$('resendBtn').addEventListener('click', resendCode);
+$('verifyBtn').addEventListener('click', verifyCode);
+
+// Enter key support
+$('phone').addEventListener('keydown', (e)=>{ if(e.key==='Enter') requestCode(); });
+$('code').addEventListener('keydown', (e)=>{ if(e.key==='Enter') verifyCode(); });
 </script>
 </body>
 </html>
