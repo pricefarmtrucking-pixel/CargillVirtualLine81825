@@ -382,25 +382,26 @@ app.get('/api/appointments', (req, res) => {
     if (!site_id) return res.status(400).json({ error:'site_id required' });
 
     const rows = db.prepare(`
-      SELECT
-        s.slot_time,
-        s.is_workin,
-        r.id               AS reservation_id,
-        r.driver_name,
-        r.license_plate,
-        r.vendor_name,
-        r.farm_or_ticket,
-        r.est_amount,
-        r.est_unit,
-        r.driver_phone,
-        r.queue_code,
-        COALESCE(r.status, 'open') AS status
-      FROM time_slots s
-      LEFT JOIN slot_reservations r
-        ON r.site_id=s.site_id AND r.date=s.date AND r.slot_time=s.slot_time
-      WHERE s.site_id=? AND s.date=?
-      ORDER BY time(s.slot_time)
-    `).all(site_id, date);
+  SELECT
+    s.slot_time,
+    s.is_workin,
+    s.disabled,              -- <— include this
+    r.id               AS reservation_id,
+    r.driver_name,
+    r.license_plate,
+    r.vendor_name,
+    r.farm_or_ticket,
+    r.est_amount,
+    r.est_unit,
+    r.driver_phone,
+    r.queue_code,
+    COALESCE(r.status, 'open') AS status
+  FROM time_slots s
+  LEFT JOIN slot_reservations r
+    ON r.site_id=s.site_id AND r.date=s.date AND r.slot_time=s.slot_time
+  WHERE s.site_id=? AND s.date=?
+  ORDER BY time(s.slot_time)
+`).all(site_id, date);
 
     res.json({ ok:true, site_id, date, items: rows });
   } catch (e) {
