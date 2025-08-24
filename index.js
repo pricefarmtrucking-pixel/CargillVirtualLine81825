@@ -657,6 +657,118 @@ app.post('/api/slots/probe-upsert', async (req, res) => {
   }
 });
 
+// DRIVER: lookup reservations by probe code (and optional phone)
+app.post('/api/driver/reservation-lookup', (req, res) => {
+  try {
+    const { probe_code, phone } = req.body || {};
+    const code = String(probe_code || '').trim();
+    if (!/^\d{4}$/.test(code)) return res.status(400).json({ error:'probe_code must be 4 digits' });
+    const phoneNorm = phone ? normPhone(phone) : null;
+
+    const rows = db.prepare(`
+      SELECT id, site_id, date, slot_time, driver_name, driver_phone, license_plate,
+             vendor_name, farm_or_ticket, est_amount, est_unit, queue_code
+      FROM slot_reservations
+      WHERE queue_code = ?
+        AND (? IS NULL OR driver_phone = ?)
+      ORDER BY date, time(slot_time)
+    `).all(code, phoneNorm, phoneNorm);
+
+    return res.json({ ok:true, items: rows });
+  } catch (e) {
+    console.error('driver lookup', e);
+    res.status(500).json({ error:'server error' });
+  }
+});
+
+// DRIVER: update reservation fields (must match probe_code and/or phone)
+app.post('/api/driver/reservation-update', async (req, res) => {
+  try {
+    const {
+      reservation_id, probe_code, phone,
+      driver_name, driver_phone, license_plate, vendor_name,
+      farm_or_ticket, est_amount, est_unit
+    } = req.body || {};
+
+    if (!reservation_id) return res.status(400).json({ error:'reservation_id required' });
+    const code = String(probe_code || '').trim();
+    const phoneNorm = phone ? normPhone(phone) : null;
+
+    const row = db.prepare(`SELECT * FROM slot_reservations WHERE id=?`).get(reservation_id);
+    if (!row) return res.status(404).json({ error:'not found' });
+
+    // Require at least one factor to match
+    const codeOk = /^\d{4}$/.test(code) && row.queue_code === code;
+    const phoneOk = phoneNorm ? (row.driver_phone === phoneNorm) : false;
+    if (!codeOk && !phoneOk) return res.status(403).json({ error:'verification failed' });
+
+    const setParts = [];
+    const vals = [];
+    const add = (col, val) => { setParts.push(`${col}=?`); vals.push(val); };
+
+    if (driver_name !== undefined)    add('driver_name', driver_name || null);
+    if (driver_phone !== undefined)   add('driver_phone', driver_phone ? normPhone(driver_phone) : null);
+    if (license_plate !== undefined)  add('license_plate', license_plate || null);
+    if (vendor_name !== undefined)    add('vendor_name', vendor_name || null);
+    if (farm_or_ticket !== undefined) add('farm_or_ticket', farm_or_ticket || null);
+    if (est_amount !== undefined)     add('est_amount', est_amount ?? null);
+    if (est_unit !== undefined)       add('est_unit', (est_unit || 'BUSHELS').toUpperCase());
+
+    if (!setParts.length) return res.json({ ok:true, updated:0 });
+
+    const sql = `UPDATE slot_reservations SET ${setParts.join(', ')} WHERE id=?`;
+    vals.push(reservation_id);
+    const info = db.prepare(sql).run(...vals);
+
+    // Optional courtesy SMS (best‑effort)
+    try {
+      const to = normPhone(driver_phone || row.driver_phone);
+      if (to) {
+        await sendSMS(to, `Cargill: Your ${row.date} ${row.slot_time} reservation details were updated.`);
+      }
+    } catch { /* ignore */ }
+
+    return res.json({ ok:true, updated: info.changes });
+  } catch (e) {
+    console.error('driver update', e);
+    res.status(500).json({ error:'server error' });
+  }
+});
+
+// DRIVER: cancel reservation (must match probe_code and/or phone)
+app.post('/api/driver/reservation-cancel', (req, res) => {
+  try {
+    const { reservation_id, probe_code, phone } = req.body || {};
+    if (!reservation_id) return res.status(400).json({ error:'reservation_id required' });
+
+    const code = String(probe_code || '').trim();
+    const phoneNorm = phone ? normPhone(phone) : null;
+
+    const r = db.prepare(`SELECT * FROM slot_reservations WHERE id=?`).get(reservation_id);
+    if (!r) return res.status(404).json({ error:'not found' });
+
+    const codeOk = /^\d{4}$/.test(code) && r.queue_code === code;
+    const phoneOk = phoneNorm ? (r.driver_phone === phoneNorm) : false;
+    if (!codeOk && !phoneOk) return res.status(403).json({ error:'verification failed' });
+
+    // release the slot
+    db.prepare(`DELETE FROM slot_reservations WHERE id=?`).run(reservation_id);
+    db.prepare(`
+      UPDATE time_slots
+         SET reserved_truck_id=NULL, reserved_at=NULL
+       WHERE site_id=? AND date=? AND slot_time=? AND reserved_truck_id=?
+    `).run(r.site_id, r.date, r.slot_time, r.id);
+
+    // push updates to listeners (SSE)
+    if (typeof emitSlotsChanged === 'function') emitSlotsChanged(r.site_id, r.date);
+
+    return res.json({ ok:true });
+  } catch (e) {
+    console.error('driver cancel', e);
+    res.status(500).json({ error:'server error' });
+  }
+});
+
 // ------------------------- Cancel / Reassign ---------------------------------
 app.post('/api/slots/cancel', (req, res) => {
   const { reservation_id } = req.body || {};
