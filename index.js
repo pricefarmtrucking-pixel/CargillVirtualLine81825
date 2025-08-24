@@ -715,6 +715,77 @@ app.post('/api/slots/reassign', (req, res) => {
 
   res.json({ ok:true, reservation_id, to_slot_time, queue_code: r.queue_code });
 });
+// --- ADMIN: update reservation (edit existing) ---
+app.post('/api/admin/update-reservation', async (req, res) => {
+  try {
+    const { reservation_id, driver_name, driver_phone, license_plate,
+            vendor_name, farm_or_ticket, est_amount, est_unit } = req.body || {};
+    if (!reservation_id) return res.status(400).json({ error:'reservation_id required' });
+
+    const row = db.prepare(`SELECT * FROM slot_reservations WHERE id=?`).get(reservation_id);
+    if (!row) return res.status(404).json({ error:'reservation not found' });
+
+    db.prepare(`
+      UPDATE slot_reservations
+         SET driver_name=?, driver_phone=?, license_plate=?,
+             vendor_name=?, farm_or_ticket=?, est_amount=?, est_unit=?
+       WHERE id=?
+    `).run(driver_name, driver_phone, license_plate,
+           vendor_name, farm_or_ticket, est_amount, est_unit, reservation_id);
+
+    // optional notify
+    if (driver_phone) {
+      const msg = `Cargill: Your ${row.date} ${row.slot_time} reservation has been updated. Probe code: ${row.queue_code||'N/A'}.`;
+      await sendSMS(driver_phone, msg);
+    }
+
+    res.json({ ok:true });
+  } catch (e) {
+    console.error('update-reservation', e);
+    res.status(500).json({ error:'server error' });
+  }
+});
+
+// --- ADMIN: reserve an open slot (create new reservation manually) ---
+app.post('/api/admin/reserve', async (req, res) => {
+  try {
+    const { site_id, date, slot_time, driver_name, driver_phone,
+            license_plate, vendor_name, farm_or_ticket,
+            est_amount, est_unit, queue_code } = req.body || {};
+    if (!site_id || !date || !slot_time) {
+      return res.status(400).json({ error:'site_id, date, slot_time required' });
+    }
+
+    const probe = queue_code || String(Math.floor(1000 + Math.random()*9000));
+
+    const info = db.prepare(`
+      INSERT INTO slot_reservations
+        (site_id,date,slot_time,driver_name,license_plate,vendor_name,
+         farm_or_ticket,est_amount,est_unit,driver_phone,queue_code,status)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?, 'reserved')
+      RETURNING id
+    `).get(site_id, date, slot_time,
+           driver_name||null, license_plate||null, vendor_name||null,
+           farm_or_ticket||null, est_amount||null, (est_unit||'BUSHELS').toUpperCase(),
+           normPhone(driver_phone)||null, probe);
+
+    db.prepare(`
+      UPDATE time_slots
+         SET reserved_truck_id=?, reserved_at=CURRENT_TIMESTAMP
+       WHERE site_id=? AND date=? AND slot_time=?
+    `).run(info.id, site_id, date, slot_time);
+
+    if (driver_phone) {
+      const msg = `Cargill: Reserved ${date} at ${slot_time}. Probe code: ${probe}. Reply STOP to opt out.`;
+      await sendSMS(driver_phone, msg);
+    }
+
+    res.json({ ok:true, reservation_id: info.id, queue_code: probe });
+  } catch (e) {
+    console.error('admin-reserve', e);
+    res.status(500).json({ error:'server error' });
+  }
+});
 
 // ------------------------- Mass Cancel / Notify / Disable-Enable -------------
 app.post('/api/slots/mass-cancel', async (req, res) => {
