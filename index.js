@@ -787,6 +787,51 @@ app.post('/api/admin/reserve', async (req, res) => {
   }
 });
 
+// ------------------------- Enable / Disable Open Slots -----------------------
+// Body: { site_id, date, slot_times: ["HH:MM", ...] }
+// NOTE: These act only on the time_slots rows for the given site/date/times.
+//       They don't touch reservations; UI already filters to open rows.
+
+app.post('/api/slots/disable', (req, res) => {
+  try {
+    const { site_id, date, slot_times = [] } = req.body || {};
+    if (!site_id || !date || !Array.isArray(slot_times) || slot_times.length === 0) {
+      return res.status(400).json({ ok:false, error: 'site_id, date, slot_times[] required' });
+    }
+    const q = slot_times.map(() => '?').join(',');
+    const info = db.prepare(`
+      UPDATE time_slots
+         SET disabled = 1
+       WHERE site_id = ? AND date = ? AND slot_time IN (${q})
+    `).run(site_id, date, ...slot_times);
+
+    return res.json({ ok:true, updated: info.changes });
+  } catch (e) {
+    console.error('/api/slots/disable', e);
+    return res.status(500).json({ ok:false, error: 'server error' });
+  }
+});
+
+app.post('/api/slots/enable', (req, res) => {
+  try {
+    const { site_id, date, slot_times = [] } = req.body || {};
+    if (!site_id || !date || !Array.isArray(slot_times) || slot_times.length === 0) {
+      return res.status(400).json({ ok:false, error: 'site_id, date, slot_times[] required' });
+    }
+    const q = slot_times.map(() => '?').join(',');
+    const info = db.prepare(`
+      UPDATE time_slots
+         SET disabled = 0
+       WHERE site_id = ? AND date = ? AND slot_time IN (${q})
+    `).run(site_id, date, ...slot_times);
+
+    return res.json({ ok:true, updated: info.changes });
+  } catch (e) {
+    console.error('/api/slots/enable', e);
+    return res.status(500).json({ ok:false, error: 'server error' });
+  }
+});
+
 // ------------------------- Mass Cancel / Notify / Disable-Enable -------------
 app.post('/api/slots/mass-cancel', async (req, res) => {
   try {
