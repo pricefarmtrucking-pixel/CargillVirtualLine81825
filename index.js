@@ -657,6 +657,150 @@ app.post('/api/slots/probe-upsert', async (req, res) => {
   }
 });
 
+// ------------------------- Driver Manage (Find / Update) ----------------------
+// Simple in-memory throttle per IP to reduce brute force attempts
+const manageAttempts = new Map(); // ip -> { count, firstTs }
+function tooMany(ip, limit=12, windowMs=10*60*1000) {
+  const now = Date.now();
+  const rec = manageAttempts.get(ip) || { count:0, firstTs: now };
+  if (now - rec.firstTs > windowMs) { // reset window
+    rec.count = 0; rec.firstTs = now;
+  }
+  rec.count += 1;
+  manageAttempts.set(ip, rec);
+  return rec.count > limit;
+}
+
+// Normalize helpers (reuse your existing normPhone if available)
+const cleanStr = (s, max=120) => (s==null ? null : String(s).trim().slice(0,max)) || null;
+
+// POST /api/driver/manage/find
+// Body: { probe_code, phone?, last4? }
+app.post('/api/driver/manage/find', (req, res) => {
+  try {
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
+    if (tooMany(ip)) return res.status(429).json({ ok:false, error:'Too many attempts. Try again later.' });
+
+    const probe_code = String(req.body?.probe_code || '').trim();
+    const phoneFull  = normPhone(req.body?.phone);
+    const last4      = String(req.body?.last4 || '').replace(/\D/g,'').slice(-4);
+
+    if (!/^\d{4}$/.test(probe_code)) {
+      return res.status(400).json({ ok:false, error:'Invalid probe/phone combination.' });
+    }
+    if (!phoneFull && !/^\d{4}$/.test(last4)) {
+      return res.status(400).json({ ok:false, error:'Invalid probe/phone combination.' });
+    }
+
+    // Build WHERE with both factors; if last4 used, compare last 4 of stored phone
+    const row = db.prepare(`
+      SELECT id AS reservation_id, site_id, date, slot_time, driver_name, license_plate,
+             vendor_name, farm_or_ticket, est_amount, est_unit, driver_phone, queue_code
+        FROM slot_reservations
+       WHERE queue_code = ?
+         AND (
+              (driver_phone IS NOT NULL AND ? IS NOT NULL AND driver_phone = ?)
+           OR (driver_phone IS NOT NULL AND ? <> '' AND substr(replace(driver_phone,'+',''), -4) = ?)
+         )
+       ORDER BY id DESC LIMIT 1
+    `).get(
+      probe_code,
+      phoneFull, phoneFull,
+      last4, last4
+    );
+
+    if (!row) {
+      // opaque message (don’t reveal which one was wrong)
+      return res.status(404).json({ ok:false, error:'Invalid probe/phone combination.' });
+    }
+
+    // Don’t expose the full phone in responses to casual callers (frontend already has it)
+    const safe = { ...row };
+    res.json({ ok:true, reservation: safe });
+  } catch (e) {
+    console.error('/api/driver/manage/find', e);
+    res.status(500).json({ ok:false, error:'server error' });
+  }
+});
+
+// POST /api/driver/manage/update
+// Body: { reservation_id, probe_code, phone, driver_name?, driver_phone?, license_plate?, vendor_name?,
+//         farm_or_ticket?, est_amount?, est_unit?, notify?, lookup_phone?, lookup_probe? }
+app.post('/api/driver/manage/update', async (req, res) => {
+  try {
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
+    if (tooMany(ip)) return res.status(429).json({ ok:false, error:'Too many attempts. Try again later.' });
+
+    const reservation_id = Number(req.body?.reservation_id);
+    const probe_code     = String(req.body?.probe_code || '').trim();
+    const phoneProvided  = normPhone(req.body?.phone) || null;
+
+    // Double-check original lookup factors (opaque failure on mismatch)
+    const lookupProbe = String(req.body?.lookup_probe || '').trim();
+    const lookupPhone = String(req.body?.lookup_phone || '').trim();
+    const lookupFull  = normPhone(lookupPhone);
+    const lookupLast4 = lookupPhone.replace(/\D/g,'').slice(-4);
+
+    if (!reservation_id || !/^\d{4}$/.test(probe_code)) {
+      return res.status(400).json({ ok:false, error:'Invalid request.' });
+    }
+
+    const row = db.prepare(`
+      SELECT * FROM slot_reservations WHERE id=? LIMIT 1
+    `).get(reservation_id);
+
+    if (!row) return res.status(404).json({ ok:false, error:'Not found.' });
+
+    // Verify both: probe and phone (full OR last4 via original lookup)
+    const last4Stored = String((row.driver_phone||'').replace(/\D/g,'')).slice(-4);
+    const phoneMatches =
+      (lookupFull && row.driver_phone === lookupFull) ||
+      (!!lookupLast4 && lookupLast4 === last4Stored);
+
+    if (row.queue_code !== probe_code || !phoneMatches) {
+      // Don’t reveal which factor failed
+      return res.status(403).json({ ok:false, error:'Unauthorized.' });
+    }
+
+    // Whitelist + normalize
+    const updates = {
+      driver_name   : cleanStr(req.body?.driver_name, 80),
+      driver_phone  : phoneProvided || row.driver_phone || null,
+      license_plate : cleanStr(req.body?.license_plate, 32),
+      vendor_name   : cleanStr(req.body?.vendor_name, 80),
+      farm_or_ticket: cleanStr(req.body?.farm_or_ticket, 80),
+      est_amount    : (Number.isFinite(Number(req.body?.est_amount)) ? Math.max(1, Math.min(100000, Number(req.body?.est_amount))) : row.est_amount),
+      est_unit      : cleanStr((req.body?.est_unit || 'BUSHELS').toUpperCase(), 12)
+    };
+
+    // Build dynamic SET list only for provided fields (null allowed)
+    const setParts = [];
+    const vals = [];
+    for (const [k,v] of Object.entries(updates)) {
+      if (req.body?.[k] !== undefined) { setParts.push(`${k}=?`); vals.push(v); }
+    }
+    if (!setParts.length) return res.json({ ok:true, updated: 0 });
+
+    // Update
+    const sql = `UPDATE slot_reservations SET ${setParts.join(', ')} WHERE id=?`;
+    vals.push(reservation_id);
+    const info = db.prepare(sql).run(...vals);
+
+    // Optional notify (best-effort; message is generic)
+    const notify = !!req.body?.notify;
+    if (notify && updates.driver_phone) {
+      try {
+        await sendSMS(updates.driver_phone, `Cargill: Your ${row.date} ${row.slot_time} reservation details were updated.`);
+      } catch (_) {}
+    }
+
+    return res.json({ ok:true, updated: info.changes || 0 });
+  } catch (e) {
+    console.error('/api/driver/manage/update', e);
+    res.status(500).json({ ok:false, error:'server error' });
+  }
+});
+
 // DRIVER: lookup reservations by probe code (and optional phone)
 app.post('/api/driver/reservation-lookup', (req, res) => {
   try {
