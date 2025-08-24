@@ -1,0 +1,218 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Manage Reservation — Cargill Soybean</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color:#222; }
+    .wrap { max-width: 900px; margin: 4vh auto; padding: 0 16px; }
+    .card { border:1px solid #ddd; border-radius:12px; padding:1rem; background:#fff; }
+    .row { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap:.6rem; }
+    input, select, button { padding:.55rem .7rem; border:1px solid #ccc; border-radius:10px; }
+    button.primary { background:#1e90ff; color:#fff; border:none; }
+    .grid { display:grid; grid-template-columns: repeat(4, 1fr); gap:.5rem; margin-top:.5rem; }
+    .slot { padding:.5rem; border:1px solid #ddd; border-radius:999px; text-align:center; cursor:pointer; }
+    .slot:hover { outline: 2px solid #1e90ff33; }
+    .muted { color:#666; font-size:.95rem; }
+    .bad { color:#b00020; }
+    .good { color:#0a7d26; }
+    .hl { background:#fff7e6; border-color:#ffbf66; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h2>Manage My Reservation</h2>
+  <div class="card">
+    <div class="row">
+      <label>Site
+        <select id="site">
+          <option value="1">EAST (1)</option>
+          <option value="2">WEST (2)</option>
+        </select>
+      </label>
+      <label>Date
+        <input id="date" type="date"/>
+      </label>
+      <label>Probe Code (4 digits)
+        <input id="probe" type="text" inputmode="numeric" placeholder="1234" maxlength="4"/>
+      </label>
+    </div>
+    <div style="margin-top:.6rem">
+      <button id="lookup" class="primary">Find Reservation</button>
+      <span id="msg" class="muted"></span>
+    </div>
+  </div>
+
+  <div id="panel" class="card" style="margin-top:1rem; display:none">
+    <h3>Reservation</h3>
+    <div class="muted" id="summary"></div>
+
+    <h4 style="margin-top:.8rem">Edit Details</h4>
+    <div class="row">
+      <label>Driver Name <input id="driver_name" /></label>
+      <label>Driver Phone <input id="driver_phone" placeholder="(555) 555-5555"/></label>
+      <label>License Plate <input id="license_plate" /></label>
+      <label>Vendor Name <input id="vendor_name" /></label>
+      <label>Farm or Ticket # <input id="farm_or_ticket" /></label>
+      <label>Estimated Amount
+        <div style="display:flex; gap:.4rem">
+          <input id="est_amount" type="number" style="flex:1"/>
+          <select id="est_unit" style="max-width:160px">
+            <option>BUSHELS</option>
+            <option>TONS</option>
+          </select>
+        </div>
+      </label>
+    </div>
+    <div style="margin-top:.6rem">
+      <button id="save" class="primary">Save Changes</button>
+      <span id="saveMsg" class="muted"></span>
+    </div>
+
+    <h4 style="margin-top:1rem">Move to a Different Time</h4>
+    <div class="muted">Pick any open time for the same site and date.</div>
+    <div id="openGrid" class="grid"></div>
+
+    <div style="margin-top:1rem">
+      <button id="cancelBtn" style="background:#fff; border:1px solid #b00020; color:#b00020">Cancel Reservation</button>
+      <span id="cancelMsg" class="muted"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+$('date').value = new Date().toISOString().slice(0,10);
+
+let current = null; // { reservation, slot_status }
+
+async function lookup(){
+  try{
+    const site_id = +$('site').value;
+    const date = $('date').value;
+    const probe = ($('probe').value||'').trim();
+    $('msg').textContent = 'Looking up…';
+    const r = await fetch(`/api/driver/reservation?site_id=${site_id}&date=${encodeURIComponent(date)}&probe=${encodeURIComponent(probe)}`);
+    const data = await r.json();
+    if(!r.ok || !data.ok){ throw new Error(data.error||'Lookup failed'); }
+
+    current = data;
+    const resv = data.reservation;
+
+    $('panel').style.display = 'block';
+    $('summary').innerHTML =
+      `Time: <b>${resv.slot_time}</b> (${site_id===1?'EAST':'WEST'}) • Probe: <b>${resv.queue_code}</b>` +
+      (data.slot_status?.disabled ? ` &nbsp; <span class="bad">(Slot disabled)</span>` : '');
+
+    // hydrate form
+    $('driver_name').value   = resv.driver_name   || '';
+    $('driver_phone').value  = resv.driver_phone  || '';
+    $('license_plate').value = resv.license_plate || '';
+    $('vendor_name').value   = resv.vendor_name   || '';
+    $('farm_or_ticket').value= resv.farm_or_ticket|| '';
+    $('est_amount').value    = resv.est_amount    ?? '';
+    $('est_unit').value      = (resv.est_unit||'BUSHELS').toUpperCase();
+
+    $('msg').textContent = '';
+    loadOpen(); // build move grid
+  }catch(e){
+    $('msg').textContent = e.message;
+    $('panel').style.display = 'none';
+  }
+}
+
+async function loadOpen(){
+  const site_id = +$('site').value;
+  const date = $('date').value;
+  const grid = $('openGrid');
+  grid.innerHTML = 'Loading open times…';
+  const r = await fetch(`/api/sites/${site_id}/slots?date=${encodeURIComponent(date)}`);
+  const slots = await r.json().catch(()=>[]);
+  grid.innerHTML = '';
+  if(!Array.isArray(slots) || slots.length===0){
+    grid.textContent = 'No open times available.';
+    return;
+  }
+  const cur = current?.reservation?.slot_time;
+  for(const t of slots){
+    const div = document.createElement('div');
+    div.className = 'slot' + (t===cur ? ' hl' : '');
+    div.textContent = t + (t===cur ? ' (current)' : '');
+    div.onclick = () => reassign(t);
+    grid.appendChild(div);
+  }
+}
+
+async function save(){
+  try{
+    $('saveMsg').textContent = 'Saving…';
+    const site_id = +$('site').value;
+    const date = $('date').value;
+    const probe = ($('probe').value||'').trim();
+    const body = {
+      site_id, date, probe,
+      driver_name: $('driver_name').value,
+      driver_phone: $('driver_phone').value,
+      license_plate: $('license_plate').value,
+      vendor_name: $('vendor_name').value,
+      farm_or_ticket: $('farm_or_ticket').value,
+      est_amount: $('est_amount').value ? Number($('est_amount').value) : null,
+      est_unit: $('est_unit').value
+    };
+    const r = await fetch('/api/driver/reservation/update', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const data = await r.json();
+    if(!r.ok || !data.ok) throw new Error(data.error||'Save failed');
+    $('saveMsg').textContent = 'Saved ✓';
+  }catch(e){
+    $('saveMsg').textContent = e.message;
+  }
+}
+
+async function reassign(to_slot_time){
+  try{
+    const site_id = +$('site').value;
+    const date = $('date').value;
+    const probe = ($('probe').value||'').trim();
+    const r = await fetch('/api/driver/reservation/reassign', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ site_id, date, probe, to_slot_time })
+    });
+    const data = await r.json();
+    if(!r.ok || !data.ok) throw new Error(data.error||'Move failed');
+    $('msg').textContent = '';
+    await lookup(); // refresh details
+  }catch(e){
+    $('msg').textContent = e.message;
+  }
+}
+
+async function cancelRes(){
+  if(!confirm('Cancel your reservation?')) return;
+  try{
+    const site_id = +$('site').value;
+    const date = $('date').value;
+    const probe = ($('probe').value||'').trim();
+    const r = await fetch('/api/driver/reservation/cancel', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ site_id, date, probe })
+    });
+    const data = await r.json();
+    if(!r.ok || !data.ok) throw new Error(data.error||'Cancel failed');
+    $('cancelMsg').textContent = 'Reservation cancelled.';
+    $('panel').style.display = 'none';
+  }catch(e){
+    $('cancelMsg').textContent = e.message;
+  }
+}
+
+$('lookup').onclick = lookup;
+$('save').onclick = save;
+$('cancelBtn').onclick = cancelRes;
+</script>
+</body>
+</html>
