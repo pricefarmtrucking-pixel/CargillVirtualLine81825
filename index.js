@@ -1,4 +1,4 @@
-// index.js — Cargill Virtual Line (ESM, full backend, soft-disable ready)
+// index.js — Cargill Virtual Line (ESM) — interval override + SSE push
 import 'dotenv/config';
 import express from 'express';
 import cookieParser from 'cookie-parser';
@@ -7,6 +7,7 @@ import crypto from 'crypto';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { EventEmitter } from 'events';
 
 // ------------------------- Paths & ENV ---------------------------------------
 const __filename = fileURLToPath(import.meta.url);
@@ -130,6 +131,36 @@ app.use(cors({
 }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ------------------------- SSE bus -------------------------------------------
+const bus = new EventEmitter();
+bus.setMaxListeners(0); // unlimited
+
+function emitSlotsChanged(site_id, date) {
+  bus.emit('slots-changed', { site_id, date, ts: Date.now() });
+}
+
+app.get('/events', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  });
+  const send = (evt, data) => {
+    res.write(`event: ${evt}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+  const handler = payload => send('slots-changed', payload);
+  bus.on('slots-changed', handler);
+
+  // keep-alive ping (every 25s)
+  const ping = setInterval(() => send('ping', { ts: Date.now() }), 25000);
+
+  req.on('close', () => {
+    clearInterval(ping);
+    bus.off('slots-changed', handler);
+  });
+});
+
 // ------------------------- Helpers -------------------------------------------
 const sixDigit = () => String(Math.floor(100000 + Math.random()*900000));
 const fourDigit = () => String(Math.floor(1000 + Math.random()*9000));
@@ -205,29 +236,20 @@ app.post('/auth/verify', (req, res) => {
 });
 
 // ------------------------- Schedule PREVIEW (Generate Slots) -----------------
-// POST /api/sites/:id/slots/preview
 // Body: { date, open_time, close_time, loads_target, disabled_loads?, disabled_slots?, interval_min? }
 app.post('/api/sites/:id/slots/preview', (req, res) => {
   try {
     const site_id = +req.params.id;
     const {
-      date,
-      open_time,
-      close_time,
-      loads_target,
-      disabled_loads,   // accept either name
-      disabled_slots,   // alias for disabled_loads
-      interval_min      // explicit interval override (minutes)
+      date, open_time, close_time, loads_target,
+      disabled_loads, disabled_slots, interval_min
     } = req.body || {};
 
     if (!site_id || !date || !open_time || !close_time || !loads_target) {
       return res.status(400).json({ error:'missing fields' });
     }
 
-    const toMin  = t => { const [h,m] = String(t).split(':').map(Number); return h*60+m; };
-    const toHHMM = mins => `${String(Math.floor(mins/60)).padStart(2,'0')}:${String(mins%60).padStart(2,'0')}`;
-
-    const minInt = site_id === 2 ? 6 : 5;           // WEST(2)=6, EAST(1)=5
+    const minInt = site_id === 2 ? 6 : 5;
     const start  = toMin(open_time);
     const end    = toMin(close_time);
     if (!(end > start)) return res.status(400).json({ error: 'close must be after open' });
@@ -237,14 +259,12 @@ app.post('/api/sites/:id/slots/preview', (req, res) => {
     const computedInt = Math.floor(span / Math.max(1, loads_target - 1));
     const interval    = Math.max(minInt, wantedInt > 0 ? wantedInt : computedInt);
 
-    // build all times
     const times = [];
     for (let i = 0; i < loads_target; i++) {
       const t = start + i*interval;
       if (t >= start && t <= end) times.push(toHHMM(t));
     }
 
-    // decide which are disabled
     const wantDisabled = Math.max(0, Number(disabled_loads ?? disabled_slots) || 0);
     const disabledSet = new Set();
     if (wantDisabled > 0 && times.length > 0) {
@@ -252,7 +272,6 @@ app.post('/api/sites/:id/slots/preview', (req, res) => {
       for (let i = stride - 1; i < times.length && disabledSet.size < wantDisabled; i += stride) {
         disabledSet.add(times[i]);
       }
-      // backfill if rounding left us short
       for (let i = times.length - 1; disabledSet.size < wantDisabled && i >= 0; i--) {
         if (!disabledSet.has(times[i])) disabledSet.add(times[i]);
       }
@@ -273,16 +292,10 @@ app.post('/api/sites/:id/schedule', (req, res) => {
 
   try {
     const site_id = Number(req.params.id);
-    let {
-      date,
-      open_time = '',
-      close_time = '',
-      loads_target,
-      disabled_loads = 0,
-      interval_min          // explicit interval override (minutes)
-    } = req.body || {};
+    let { date, open_time = '', close_time = '', loads_target,
+          disabled_loads = 0, interval_min } = req.body || {};
 
-    // ---- normalize & validate ------------------------------------------------
+    // normalize & validate
     date = String(date || '').trim();
     open_time = String(open_time || '').trim();
     close_time = String(close_time || '').trim();
@@ -304,10 +317,7 @@ app.post('/api/sites/:id/schedule', (req, res) => {
       return res.status(400).json({ error: 'loads_target must be >= 1' });
     }
 
-    const toMin  = (t) => { const [h,m] = t.split(':').map(Number); return h*60+m; };
-    const toHHMM = (mins) => `${String(Math.floor(mins/60)).padStart(2,'0')}:${String(mins%60).padStart(2,'0')}`;
-
-    const minInt = site_id === 2 ? 6 : 5; // site minimum
+    const minInt = site_id === 2 ? 6 : 5;
     const start  = toMin(open_time);
     const end    = toMin(close_time);
     if (!(end > start)) return res.status(400).json({ error: 'close must be after open' });
@@ -316,28 +326,24 @@ app.post('/api/sites/:id/schedule', (req, res) => {
     const computedInt = Math.floor(span / Math.max(1, loads_target - 1));
     const interval    = Math.max(minInt, wantedInt > 0 ? wantedInt : computedInt);
 
-    // Build the full day’s times (regular rows only, is_workin=0)
     const times = [];
     for (let i = 0; i < loads_target; i++) {
       const t = start + i * interval;
       if (t >= start && t <= end) times.push(toHHMM(t));
     }
 
-    // Decide which to disable
     const disabledSet = new Set();
     if (disabled_loads > 0 && times.length > 0) {
       const stride = Math.max(1, Math.round(times.length / disabled_loads));
       for (let i = stride - 1; i < times.length && disabledSet.size < disabled_loads; i += stride) {
         disabledSet.add(times[i]);
       }
-      // backfill if needed
       for (let i = times.length - 1; disabledSet.size < disabled_loads && i >= 0; i--) {
         if (!disabledSet.has(times[i])) disabledSet.add(times[i]);
       }
     }
 
     const tx = db.transaction(() => {
-      // settings
       db.prepare(`
         INSERT INTO site_settings (site_id, date, loads_target, open_time, close_time, workins_per_hour)
         VALUES (?, ?, ?, ?, ?, 0)
@@ -349,20 +355,17 @@ app.post('/api/sites/:id/schedule', (req, res) => {
           updated_at       = CURRENT_TIMESTAMP
       `).run(site_id, date, loads_target, open_time, close_time);
 
-      // remove all *open* rows (keep live reservations)
       db.prepare(`
         DELETE FROM time_slots
         WHERE site_id = ? AND date = ? AND (reserved_truck_id IS NULL OR reserved_truck_id = 0)
       `).run(site_id, date);
 
-      // clear holds for the day
       db.prepare(`
         UPDATE time_slots
            SET hold_token = NULL, hold_expires_at = NULL
          WHERE site_id = ? AND date = ?
       `).run(site_id, date);
 
-      // insert new rows with disabled sprinkled in
       const ins = db.prepare(`
         INSERT INTO time_slots (site_id, date, slot_time, is_workin, reserved_truck_id, reserved_at, hold_token, hold_expires_at, disabled)
         VALUES (?, ?, ?, 0, NULL, NULL, NULL, NULL, ?)
@@ -371,12 +374,10 @@ app.post('/api/sites/:id/schedule', (req, res) => {
       `);
       for (const t of times) ins.run(site_id, date, t, disabledSet.has(t) ? 1 : 0);
     });
+    tx();
 
-    try { tx(); }
-    catch (sqlErr) {
-      console.error('SQL error in /api/sites/:id/schedule:', sqlErr);
-      return res.status(500).json({ error: DEBUG ? String(sqlErr) : 'server error' });
-    }
+    // notify listeners
+    emitSlotsChanged(site_id, date);
 
     return res.json({
       ok: true,
@@ -522,6 +523,9 @@ app.post('/api/slots/confirm', async (req, res) => {
     WHERE id=?
   `).run(info.id, slot.id);
 
+  // realtime notify
+  emitSlotsChanged(slot.site_id, slot.date);
+
   if (driver_phone) {
     await sendSMS(
       driver_phone,
@@ -546,13 +550,6 @@ app.post('/api/slots/probe-upsert', async (req, res) => {
       return res.status(400).json({ error: 'site_id, date, slot_time required' });
     }
 
-    const normPhone = p => {
-      const d = String(p||'').replace(/\D/g,'');
-      if (/^\d{10}$/.test(d)) return '+1'+d;
-      if (/^1\d{10}$/.test(d)) return '+'+d;
-      if (/^\+1\d{10}$/.test(d)) return d;
-      return null;
-    };
     const phoneNorm = normPhone(driver_phone);
 
     const slot = db.prepare(`
@@ -635,6 +632,8 @@ app.post('/api/slots/probe-upsert', async (req, res) => {
     });
     tx();
 
+    emitSlotsChanged(site_id, date);
+
     if (notify && phoneNorm) {
       try {
         if (created) {
@@ -648,7 +647,7 @@ app.post('/api/slots/probe-upsert', async (req, res) => {
             (queue_code ? ` Probe code: ${queue_code}.` : '');
           await sendSMS(phoneNorm, body);
         }
-      } catch { /* ignore sms errors */ }
+      } catch {}
     }
 
     return res.json({ ok: true, reservation_id: resvId, created, updated, queue_code });
@@ -672,6 +671,8 @@ app.post('/api/slots/cancel', (req, res) => {
     SET reserved_truck_id=NULL, reserved_at=NULL
     WHERE site_id=? AND date=? AND slot_time=? AND reserved_truck_id=?
   `).run(r.site_id, r.date, r.slot_time, r.id);
+
+  emitSlotsChanged(r.site_id, r.date);
 
   res.json({ ok:true, reservation_id, queue_code: r.queue_code });
 });
@@ -711,6 +712,8 @@ app.post('/api/slots/reassign', (req, res) => {
   });
   tx();
 
+  emitSlotsChanged(r.site_id, r.date);
+
   res.json({ ok:true, reservation_id, to_slot_time, queue_code: r.queue_code });
 });
 
@@ -734,7 +737,7 @@ app.post('/api/admin/update-reservation', async (req, res) => {
 
     if (driver_phone) {
       const msg = `Cargill: Your ${row.date} ${row.slot_time} reservation has been updated. Probe code: ${row.queue_code||'N/A'}.`;
-      await sendSMS(driver_phone, msg);   // 
+      await sendSMS(driver_phone, msg);
     }
 
     res.json({ ok:true });
@@ -773,6 +776,8 @@ app.post('/api/admin/reserve', async (req, res) => {
        WHERE site_id=? AND date=? AND slot_time=?
     `).run(info.id, site_id, date, slot_time);
 
+    emitSlotsChanged(site_id, date);
+
     if (driver_phone) {
       const msg = `Cargill: Reserved ${date} at ${slot_time}. Probe code: ${probe}. Reply STOP to opt out.`;
       await sendSMS(driver_phone, msg);
@@ -786,7 +791,6 @@ app.post('/api/admin/reserve', async (req, res) => {
 });
 
 // ------------------------- Enable / Disable Open Slots -----------------------
-// (simple versions)
 app.post('/api/slots/disable', (req, res) => {
   try {
     const { site_id, date, slot_times = [] } = req.body || {};
@@ -800,6 +804,7 @@ app.post('/api/slots/disable', (req, res) => {
        WHERE site_id = ? AND date = ? AND slot_time IN (${q})
     `).run(site_id, date, ...slot_times);
 
+    if (info.changes) emitSlotsChanged(site_id, date);
     return res.json({ ok:true, updated: info.changes });
   } catch (e) {
     console.error('/api/slots/disable', e);
@@ -820,6 +825,7 @@ app.post('/api/slots/enable', (req, res) => {
        WHERE site_id = ? AND date = ? AND slot_time IN (${q})
     `).run(site_id, date, ...slot_times);
 
+    if (info.changes) emitSlotsChanged(site_id, date);
     return res.json({ ok:true, updated: info.changes });
   } catch (e) {
     console.error('/api/slots/enable', e);
@@ -868,6 +874,8 @@ app.post('/api/slots/mass-cancel', async (req, res) => {
     });
     tx();
 
+    if (affectedReservations.length || removedOpenSlots.length) emitSlotsChanged(site_id, date);
+
     let notified = 0;
     if (notify && phones.length) {
       const msg = `Cargill: Appointment${phones.length>1?'s':''} on ${date} (${site_id===1?'EAST':'WEST'}) cancelled${reason?`: ${reason}`:''}.`;
@@ -914,139 +922,7 @@ app.post('/api/slots/mass-notify', async (req, res) => {
   }
 });
 
-// ------------------------- Driver self‑service (probe + phone) ---------------
-// POST /api/driver/lookup
-// Body: { probe_code: "1234", phone: "(555) 555-5555" }
-// Optional: { reservation_id }
-app.post('/api/driver/lookup', (req, res) => {
-  try {
-    const probe = String(req.body?.probe_code || '').trim();
-    const phone = normPhone(req.body?.phone);
-    const reservation_id = Number(req.body?.reservation_id) || null;
-
-    if (!/^\d{4}$/.test(probe) || !phone) {
-      return res.status(400).json({ ok:false, error:'probe_code (4 digits) and phone required' });
-    }
-
-    let rows;
-    if (reservation_id) {
-      rows = db.prepare(`
-        SELECT *
-          FROM slot_reservations
-         WHERE id = ?
-           AND queue_code = ?
-           AND driver_phone = ?
-         ORDER BY date, time(slot_time)
-      `).all(reservation_id, probe, phone);
-    } else {
-      rows = db.prepare(`
-        SELECT *
-          FROM slot_reservations
-         WHERE queue_code = ?
-           AND driver_phone = ?
-         ORDER BY date, time(slot_time)
-      `).all(probe, phone);
-    }
-
-    if (!rows.length) return res.status(404).json({ ok:false, error:'not found' });
-    return res.json({ ok:true, items: rows });
-  } catch (e) {
-    console.error('/api/driver/lookup', e);
-    return res.status(500).json({ ok:false, error:'server error' });
-  }
-});
-
-// POST /api/driver/update-reservation
-// Body: { reservation_id, probe_code, phone, driver_name?, license_plate?, vendor_name?, farm_or_ticket?, est_amount?, est_unit? }
-app.post('/api/driver/update-reservation', (req, res) => {
-  try {
-    const {
-      reservation_id,
-      probe_code,
-      phone,
-      driver_name,
-      license_plate,
-      vendor_name,
-      farm_or_ticket,
-      est_amount,
-      est_unit
-    } = req.body || {};
-
-    if (!reservation_id || !/^\d{4}$/.test(String(probe_code||''))) {
-      return res.status(400).json({ ok:false, error:'reservation_id and 4-digit probe_code required' });
-    }
-    const phoneNorm = normPhone(phone);
-    if (!phoneNorm) return res.status(400).json({ ok:false, error:'valid phone required' });
-
-    // AuthZ: ensure probe + phone match this reservation
-    const row = db.prepare(`
-      SELECT * FROM slot_reservations
-       WHERE id=? AND queue_code=? AND driver_phone=?
-    `).get(reservation_id, String(probe_code), phoneNorm);
-    if (!row) return res.status(403).json({ ok:false, error:'invalid probe/phone for reservation' });
-
-    // Build dynamic update
-    const set = [];
-    const vals = [];
-    const push = (col,val) => { set.push(`${col}=?`); vals.push(val); };
-
-    if (driver_name !== undefined)   push('driver_name',   driver_name || null);
-    if (license_plate !== undefined) push('license_plate', license_plate || null);
-    if (vendor_name !== undefined)   push('vendor_name',   vendor_name || null);
-    if (farm_or_ticket !== undefined)push('farm_or_ticket',farm_or_ticket || null);
-    if (est_amount !== undefined)    push('est_amount',    est_amount ?? null);
-    if (est_unit !== undefined)      push('est_unit',      (est_unit || 'BUSHELS').toUpperCase());
-
-    if (!set.length) return res.json({ ok:true, updated:0 });
-
-    vals.push(reservation_id);
-    const info = db.prepare(`UPDATE slot_reservations SET ${set.join(', ')} WHERE id=?`).run(...vals);
-
-    // Optional: text the driver confirming changes
-    try {
-      await sendSMS(phoneNorm, `Cargill: Your ${row.date} ${row.slot_time} reservation details were updated.`);
-    } catch (_) {}
-
-    return res.json({ ok:true, updated: info.changes });
-  } catch (e) {
-    console.error('/api/driver/update-reservation', e);
-    return res.status(500).json({ ok:false, error:'server error' });
-  }
-});
-
-// (Optional) Driver cancel
-// POST /api/driver/cancel  Body: { reservation_id, probe_code, phone }
-app.post('/api/driver/cancel', (req, res) => {
-  try {
-    const { reservation_id, probe_code, phone } = req.body || {};
-    const phoneNorm = normPhone(phone);
-    if (!reservation_id || !/^\d{4}$/.test(String(probe_code||'')) || !phoneNorm) {
-      return res.status(400).json({ ok:false, error:'reservation_id, probe_code, phone required' });
-    }
-    const r = db.prepare(`
-      SELECT * FROM slot_reservations WHERE id=? AND queue_code=? AND driver_phone=?
-    `).get(reservation_id, String(probe_code), phoneNorm);
-    if (!r) return res.status(403).json({ ok:false, error:'invalid probe/phone for reservation' });
-
-    db.prepare(`DELETE FROM slot_reservations WHERE id=?`).run(reservation_id);
-    db.prepare(`
-      UPDATE time_slots
-         SET reserved_truck_id=NULL, reserved_at=NULL
-       WHERE site_id=? AND date=? AND slot_time=? AND reserved_truck_id=?
-    `).run(r.site_id, r.date, r.slot_time, r.id);
-
-    emitSlotsChanged(r.site_id, r.date);
-
-    try { await sendSMS(phoneNorm, `Cargill: Your ${r.date} ${r.slot_time} reservation was canceled.`); } catch (_){}
-
-    return res.json({ ok:true });
-  } catch (e) {
-    console.error('/api/driver/cancel', e);
-    return res.status(500).json({ ok:false, error:'server error' });
-  }
-});
-
-// ------------------------- Health / Debug ------------------------------------
+// ------------------------- Debug --------------------------------------------
 app.get('/healthz', (_req, res) => res.json({ ok:true }));
 app.get('/debug/env', (_req, res) => {
   res.json({
@@ -1065,17 +941,10 @@ app.get('/debug/slots', (req,res)=>{
 });
 
 // ------------------------- Append Times (no disruption) ----------------------
+// Body: { site_id, date, start, end, loads_target?, interval_min?, is_workin? }
 app.post('/api/slots/add-times', (req, res) => {
   try {
-    const {
-      site_id,
-      date,
-      start,
-      end,
-      loads_target,
-      interval_min,
-      is_workin = 0
-    } = req.body || {};
+    const { site_id, date, start, end, loads_target, interval_min, is_workin = 0 } = req.body || {};
 
     if (!site_id || !date || !start || !end) {
       return res.status(400).json({ ok:false, error: 'site_id, date, start, end required' });
@@ -1087,9 +956,6 @@ app.post('/api/slots/add-times', (req, res) => {
     if (!hhmmRe.test(String(start)) || !hhmmRe.test(String(end))) {
       return res.status(400).json({ ok:false, error: 'start/end must be HH:MM' });
     }
-
-    const toMin = (t) => { const [h,m] = String(t).split(':').map(Number); return h*60+m; };
-    const toHHMM = (mins) => `${String(Math.floor(mins/60)).padStart(2,'0')}:${String(mins%60).padStart(2,'0')}`;
 
     const s = toMin(start);
     const e = toMin(end);
@@ -1107,9 +973,7 @@ app.post('/api/slots/add-times', (req, res) => {
     }
 
     const newTimes = [];
-    for (let t = s; t <= e; t += step) {
-      newTimes.push(toHHMM(t));
-    }
+    for (let t = s; t <= e; t += step) newTimes.push(toHHMM(t));
 
     const ins = db.prepare(`
       INSERT INTO time_slots
@@ -1119,16 +983,14 @@ app.post('/api/slots/add-times', (req, res) => {
         disabled = 0
     `);
 
-    let inserted = 0;
     const tx = db.transaction(() => {
-      for (const t of newTimes) {
-        ins.run(site_id, date, t, is_workin ? 1 : 0);
-        inserted += 1;
-      }
+      for (const t of newTimes) ins.run(site_id, date, t, is_workin ? 1 : 0);
     });
     tx();
 
-    return res.json({ ok:true, inserted, slot_times: newTimes });
+    emitSlotsChanged(site_id, date);
+
+    return res.json({ ok:true, inserted: newTimes.length, slot_times: newTimes });
   } catch (e) {
     console.error('/api/slots/add-times', e);
     return res.status(500).json({ ok:false, error:'server error' });
