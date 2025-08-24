@@ -914,6 +914,138 @@ app.post('/api/slots/mass-notify', async (req, res) => {
   }
 });
 
+// ------------------------- Driver self‑service (probe + phone) ---------------
+// POST /api/driver/lookup
+// Body: { probe_code: "1234", phone: "(555) 555-5555" }
+// Optional: { reservation_id }
+app.post('/api/driver/lookup', (req, res) => {
+  try {
+    const probe = String(req.body?.probe_code || '').trim();
+    const phone = normPhone(req.body?.phone);
+    const reservation_id = Number(req.body?.reservation_id) || null;
+
+    if (!/^\d{4}$/.test(probe) || !phone) {
+      return res.status(400).json({ ok:false, error:'probe_code (4 digits) and phone required' });
+    }
+
+    let rows;
+    if (reservation_id) {
+      rows = db.prepare(`
+        SELECT *
+          FROM slot_reservations
+         WHERE id = ?
+           AND queue_code = ?
+           AND driver_phone = ?
+         ORDER BY date, time(slot_time)
+      `).all(reservation_id, probe, phone);
+    } else {
+      rows = db.prepare(`
+        SELECT *
+          FROM slot_reservations
+         WHERE queue_code = ?
+           AND driver_phone = ?
+         ORDER BY date, time(slot_time)
+      `).all(probe, phone);
+    }
+
+    if (!rows.length) return res.status(404).json({ ok:false, error:'not found' });
+    return res.json({ ok:true, items: rows });
+  } catch (e) {
+    console.error('/api/driver/lookup', e);
+    return res.status(500).json({ ok:false, error:'server error' });
+  }
+});
+
+// POST /api/driver/update-reservation
+// Body: { reservation_id, probe_code, phone, driver_name?, license_plate?, vendor_name?, farm_or_ticket?, est_amount?, est_unit? }
+app.post('/api/driver/update-reservation', (req, res) => {
+  try {
+    const {
+      reservation_id,
+      probe_code,
+      phone,
+      driver_name,
+      license_plate,
+      vendor_name,
+      farm_or_ticket,
+      est_amount,
+      est_unit
+    } = req.body || {};
+
+    if (!reservation_id || !/^\d{4}$/.test(String(probe_code||''))) {
+      return res.status(400).json({ ok:false, error:'reservation_id and 4-digit probe_code required' });
+    }
+    const phoneNorm = normPhone(phone);
+    if (!phoneNorm) return res.status(400).json({ ok:false, error:'valid phone required' });
+
+    // AuthZ: ensure probe + phone match this reservation
+    const row = db.prepare(`
+      SELECT * FROM slot_reservations
+       WHERE id=? AND queue_code=? AND driver_phone=?
+    `).get(reservation_id, String(probe_code), phoneNorm);
+    if (!row) return res.status(403).json({ ok:false, error:'invalid probe/phone for reservation' });
+
+    // Build dynamic update
+    const set = [];
+    const vals = [];
+    const push = (col,val) => { set.push(`${col}=?`); vals.push(val); };
+
+    if (driver_name !== undefined)   push('driver_name',   driver_name || null);
+    if (license_plate !== undefined) push('license_plate', license_plate || null);
+    if (vendor_name !== undefined)   push('vendor_name',   vendor_name || null);
+    if (farm_or_ticket !== undefined)push('farm_or_ticket',farm_or_ticket || null);
+    if (est_amount !== undefined)    push('est_amount',    est_amount ?? null);
+    if (est_unit !== undefined)      push('est_unit',      (est_unit || 'BUSHELS').toUpperCase());
+
+    if (!set.length) return res.json({ ok:true, updated:0 });
+
+    vals.push(reservation_id);
+    const info = db.prepare(`UPDATE slot_reservations SET ${set.join(', ')} WHERE id=?`).run(...vals);
+
+    // Optional: text the driver confirming changes
+    try {
+      await sendSMS(phoneNorm, `Cargill: Your ${row.date} ${row.slot_time} reservation details were updated.`);
+    } catch (_) {}
+
+    return res.json({ ok:true, updated: info.changes });
+  } catch (e) {
+    console.error('/api/driver/update-reservation', e);
+    return res.status(500).json({ ok:false, error:'server error' });
+  }
+});
+
+// (Optional) Driver cancel
+// POST /api/driver/cancel  Body: { reservation_id, probe_code, phone }
+app.post('/api/driver/cancel', (req, res) => {
+  try {
+    const { reservation_id, probe_code, phone } = req.body || {};
+    const phoneNorm = normPhone(phone);
+    if (!reservation_id || !/^\d{4}$/.test(String(probe_code||'')) || !phoneNorm) {
+      return res.status(400).json({ ok:false, error:'reservation_id, probe_code, phone required' });
+    }
+    const r = db.prepare(`
+      SELECT * FROM slot_reservations WHERE id=? AND queue_code=? AND driver_phone=?
+    `).get(reservation_id, String(probe_code), phoneNorm);
+    if (!r) return res.status(403).json({ ok:false, error:'invalid probe/phone for reservation' });
+
+    db.prepare(`DELETE FROM slot_reservations WHERE id=?`).run(reservation_id);
+    db.prepare(`
+      UPDATE time_slots
+         SET reserved_truck_id=NULL, reserved_at=NULL
+       WHERE site_id=? AND date=? AND slot_time=? AND reserved_truck_id=?
+    `).run(r.site_id, r.date, r.slot_time, r.id);
+
+    emitSlotsChanged(r.site_id, r.date);
+
+    try { await sendSMS(phoneNorm, `Cargill: Your ${r.date} ${r.slot_time} reservation was canceled.`); } catch (_){}
+
+    return res.json({ ok:true });
+  } catch (e) {
+    console.error('/api/driver/cancel', e);
+    return res.status(500).json({ ok:false, error:'server error' });
+  }
+});
+
 // ------------------------- Health / Debug ------------------------------------
 app.get('/healthz', (_req, res) => res.json({ ok:true }));
 app.get('/debug/env', (_req, res) => {

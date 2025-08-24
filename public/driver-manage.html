@@ -1,218 +1,215 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Manage Reservation — Cargill Soybean</title>
-  <style>
-    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color:#222; }
-    .wrap { max-width: 900px; margin: 4vh auto; padding: 0 16px; }
-    .card { border:1px solid #ddd; border-radius:12px; padding:1rem; background:#fff; }
-    .row { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap:.6rem; }
-    input, select, button { padding:.55rem .7rem; border:1px solid #ccc; border-radius:10px; }
-    button.primary { background:#1e90ff; color:#fff; border:none; }
-    .grid { display:grid; grid-template-columns: repeat(4, 1fr); gap:.5rem; margin-top:.5rem; }
-    .slot { padding:.5rem; border:1px solid #ddd; border-radius:999px; text-align:center; cursor:pointer; }
-    .slot:hover { outline: 2px solid #1e90ff33; }
-    .muted { color:#666; font-size:.95rem; }
-    .bad { color:#b00020; }
-    .good { color:#0a7d26; }
-    .hl { background:#fff7e6; border-color:#ffbf66; }
-  </style>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Manage Reservation — Cargill Soybean</title>
+<style>
+  :root{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#222}
+  .wrap{max-width:900px;margin:4vh auto;padding:0 16px}
+  .card{border:1px solid #ddd;border-radius:12px;padding:1rem;background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.03)}
+  .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:.7rem}
+  label{display:block;font-size:.95rem;margin:.35rem 0 .25rem;color:#444}
+  input,select{width:100%;padding:.6rem .7rem;border:1px solid #ccc;border-radius:10px}
+  .btn{padding:.6rem 1rem;border:1px solid #ccc;border-radius:10px;background:#f7f7f7;cursor:pointer}
+  .btn.primary{background:#1e90ff;border-color:#1e90ff;color:#fff}
+  .btn.danger{background:#ffecec;border-color:#ffb3b3;color:#a40000}
+  .muted{color:#666}
+  .ok{color:#0a7c2f}
+  .err{color:#a40000}
+  .header{display:flex;gap:.5rem;align-items:center;justify-content:space-between;margin-bottom:1rem}
+  .brand{font-weight:800}
+  .table{width:100%;border-collapse:collapse;margin:.5rem 0}
+  .table th,.table td{border-bottom:1px solid #eee;padding:.5rem;text-align:left}
+</style>
 </head>
 <body>
 <div class="wrap">
-  <h2>Manage My Reservation</h2>
-  <div class="card">
-    <div class="row">
-      <label>Site
-        <select id="site">
-          <option value="1">EAST (1)</option>
-          <option value="2">WEST (2)</option>
-        </select>
-      </label>
-      <label>Date
-        <input id="date" type="date"/>
-      </label>
-      <label>Probe Code (4 digits)
-        <input id="probe" type="text" inputmode="numeric" placeholder="1234" maxlength="4"/>
-      </label>
-    </div>
-    <div style="margin-top:.6rem">
-      <button id="lookup" class="primary">Find Reservation</button>
-      <span id="msg" class="muted"></span>
+  <div class="header">
+    <div class="brand">Cargill Soybean — Manage Reservation</div>
+    <div>
+      <a class="btn" href="index.html">Home</a>
+      <a class="btn" href="driver-login.html">Driver Login</a>
     </div>
   </div>
 
-  <div id="panel" class="card" style="margin-top:1rem; display:none">
-    <h3>Reservation</h3>
-    <div class="muted" id="summary"></div>
-
-    <h4 style="margin-top:.8rem">Edit Details</h4>
+  <!-- Step 1: Lookup -->
+  <div class="card" id="lookupCard">
+    <h3>Find your reservation</h3>
+    <p class="muted">Enter the 4‑digit probe code and the mobile number that received the confirmation text.</p>
     <div class="row">
-      <label>Driver Name <input id="driver_name" /></label>
-      <label>Driver Phone <input id="driver_phone" placeholder="(555) 555-5555"/></label>
-      <label>License Plate <input id="license_plate" /></label>
-      <label>Vendor Name <input id="vendor_name" /></label>
-      <label>Farm or Ticket # <input id="farm_or_ticket" /></label>
-      <label>Estimated Amount
-        <div style="display:flex; gap:.4rem">
-          <input id="est_amount" type="number" style="flex:1"/>
-          <select id="est_unit" style="max-width:160px">
-            <option>BUSHELS</option>
-            <option>TONS</option>
-          </select>
-        </div>
-      </label>
+      <div>
+        <label>Probe Code</label>
+        <input id="probe" inputmode="numeric" maxlength="4" placeholder="1234">
+      </div>
+      <div>
+        <label>Phone</label>
+        <input id="phone" placeholder="(555) 555-5555">
+      </div>
     </div>
-    <div style="margin-top:.6rem">
-      <button id="save" class="primary">Save Changes</button>
+    <div style="margin-top:.8rem">
+      <button class="btn primary" id="doLookup">Look up</button>
+      <span id="lookupMsg" class="muted"></span>
+    </div>
+    <div id="results" style="margin-top:.8rem; display:none">
+      <table class="table" id="resTable"></table>
+    </div>
+  </div>
+
+  <!-- Step 2: Edit -->
+  <div class="card" id="editCard" style="display:none; margin-top:1rem">
+    <h3>Edit reservation</h3>
+    <div class="muted" id="whenWhere"></div>
+    <div class="row" style="margin-top:.6rem">
+      <div><label>Driver Name</label><input id="driver_name"></div>
+      <div><label>License Plate</label><input id="license_plate"></div>
+      <div><label>Beans Sold Thru (Vendor)</label><input id="vendor_name"></div>
+      <div><label>Farm Name or Ticket #</label><input id="farm_or_ticket"></div>
+      <div>
+        <label>Estimated Amount</label>
+        <input id="est_amount" type="number" step="1" min="0">
+      </div>
+      <div>
+        <label>Unit</label>
+        <select id="est_unit">
+          <option>BUSHELS</option>
+          <option>TONS</option>
+        </select>
+      </div>
+    </div>
+    <div style="margin-top:.8rem">
+      <button class="btn primary" id="save">Save changes</button>
+      <button class="btn danger" id="cancel">Cancel reservation</button>
       <span id="saveMsg" class="muted"></span>
-    </div>
-
-    <h4 style="margin-top:1rem">Move to a Different Time</h4>
-    <div class="muted">Pick any open time for the same site and date.</div>
-    <div id="openGrid" class="grid"></div>
-
-    <div style="margin-top:1rem">
-      <button id="cancelBtn" style="background:#fff; border:1px solid #b00020; color:#b00020">Cancel Reservation</button>
-      <span id="cancelMsg" class="muted"></span>
     </div>
   </div>
 </div>
 
 <script>
 const $ = id => document.getElementById(id);
+const api = p => p;
 
-$('date').value = new Date().toISOString().slice(0,10);
+let current = null;   // selected reservation row
+let probe  = '';
+let phone  = '';
 
-let current = null; // { reservation, slot_status }
+function phoneDigits(s){ return String(s||'').replace(/\D/g,''); }
 
-async function lookup(){
+$('doLookup').onclick = async () => {
+  probe = ($('probe').value||'').trim();
+  phone = phoneDigits($('phone').value);
+  $('lookupMsg').className = 'muted';
+  $('lookupMsg').textContent = 'Looking up...';
+  $('results').style.display = 'none';
+  current = null;
+
   try{
-    const site_id = +$('site').value;
-    const date = $('date').value;
-    const probe = ($('probe').value||'').trim();
-    $('msg').textContent = 'Looking up…';
-    const r = await fetch(`/api/driver/reservation?site_id=${site_id}&date=${encodeURIComponent(date)}&probe=${encodeURIComponent(probe)}`);
-    const data = await r.json();
-    if(!r.ok || !data.ok){ throw new Error(data.error||'Lookup failed'); }
+    const r = await fetch(api('/api/driver/lookup'),{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ probe_code: probe, phone })
+    }).then(r=>r.json());
 
-    current = data;
-    const resv = data.reservation;
+    if(!r.ok){ $('lookupMsg').className='err'; $('lookupMsg').textContent=r.error||'Not found.'; return; }
+    const items = r.items||[];
+    if(!items.length){ $('lookupMsg').className='err'; $('lookupMsg').textContent='No reservations found.'; return; }
 
-    $('panel').style.display = 'block';
-    $('summary').innerHTML =
-      `Time: <b>${resv.slot_time}</b> (${site_id===1?'EAST':'WEST'}) • Probe: <b>${resv.queue_code}</b>` +
-      (data.slot_status?.disabled ? ` &nbsp; <span class="bad">(Slot disabled)</span>` : '');
+    // render results
+    const t = $('resTable');
+    t.innerHTML = '<tr><th>When</th><th>Site</th><th>Driver</th><th>Plate</th><th></th></tr>';
+    for(const it of items){
+      const tr = document.createElement('tr');
+      const site = it.site_id===1?'EAST':'WEST';
+      tr.innerHTML = `
+        <td>${it.date} @ ${it.slot_time}</td>
+        <td>${site}</td>
+        <td>${it.driver_name||''}</td>
+        <td>${it.license_plate||''}</td>
+        <td><button class="btn" data-id="${it.id}">Manage</button></td>`;
+      t.appendChild(tr);
+    }
+    $('results').style.display = '';
+    $('lookupMsg').textContent = '';
 
-    // hydrate form
-    $('driver_name').value   = resv.driver_name   || '';
-    $('driver_phone').value  = resv.driver_phone  || '';
-    $('license_plate').value = resv.license_plate || '';
-    $('vendor_name').value   = resv.vendor_name   || '';
-    $('farm_or_ticket').value= resv.farm_or_ticket|| '';
-    $('est_amount').value    = resv.est_amount    ?? '';
-    $('est_unit').value      = (resv.est_unit||'BUSHELS').toUpperCase();
-
-    $('msg').textContent = '';
-    loadOpen(); // build move grid
+    // attach handlers
+    t.querySelectorAll('button[data-id]').forEach(btn=>{
+      btn.onclick = () => openEditor(items.find(x=>x.id==btn.dataset.id));
+    });
   }catch(e){
-    $('msg').textContent = e.message;
-    $('panel').style.display = 'none';
+    $('lookupMsg').className='err';
+    $('lookupMsg').textContent='Network error.';
   }
+};
+
+function openEditor(row){
+  current = row;
+  $('whenWhere').textContent = `${row.date} @ ${row.slot_time} — ${row.site_id===1?'EAST':'WEST'}`;
+  $('driver_name').value   = row.driver_name || '';
+  $('license_plate').value = row.license_plate || '';
+  $('vendor_name').value   = row.vendor_name || '';
+  $('farm_or_ticket').value= row.farm_or_ticket || '';
+  $('est_amount').value    = row.est_amount ?? '';
+  $('est_unit').value      = (row.est_unit||'BUSHELS').toUpperCase();
+  $('editCard').style.display = '';
+  window.scrollTo({ top: $('editCard').offsetTop - 12, behavior:'smooth' });
 }
 
-async function loadOpen(){
-  const site_id = +$('site').value;
-  const date = $('date').value;
-  const grid = $('openGrid');
-  grid.innerHTML = 'Loading open times…';
-  const r = await fetch(`/api/sites/${site_id}/slots?date=${encodeURIComponent(date)}`);
-  const slots = await r.json().catch(()=>[]);
-  grid.innerHTML = '';
-  if(!Array.isArray(slots) || slots.length===0){
-    grid.textContent = 'No open times available.';
-    return;
-  }
-  const cur = current?.reservation?.slot_time;
-  for(const t of slots){
-    const div = document.createElement('div');
-    div.className = 'slot' + (t===cur ? ' hl' : '');
-    div.textContent = t + (t===cur ? ' (current)' : '');
-    div.onclick = () => reassign(t);
-    grid.appendChild(div);
-  }
-}
+$('save').onclick = async () => {
+  if(!current) return;
+  $('saveMsg').className='muted';
+  $('saveMsg').textContent='Saving...';
 
-async function save(){
+  const body = {
+    reservation_id: current.id,
+    probe_code: probe,
+    phone,
+    driver_name: $('driver_name').value || null,
+    license_plate: $('license_plate').value || null,
+    vendor_name: $('vendor_name').value || null,
+    farm_or_ticket: $('farm_or_ticket').value || null,
+    est_amount: $('est_amount').value==='' ? null : Number($('est_amount').value),
+    est_unit: $('est_unit').value || 'BUSHELS'
+  };
+
   try{
-    $('saveMsg').textContent = 'Saving…';
-    const site_id = +$('site').value;
-    const date = $('date').value;
-    const probe = ($('probe').value||'').trim();
-    const body = {
-      site_id, date, probe,
-      driver_name: $('driver_name').value,
-      driver_phone: $('driver_phone').value,
-      license_plate: $('license_plate').value,
-      vendor_name: $('vendor_name').value,
-      farm_or_ticket: $('farm_or_ticket').value,
-      est_amount: $('est_amount').value ? Number($('est_amount').value) : null,
-      est_unit: $('est_unit').value
-    };
-    const r = await fetch('/api/driver/reservation/update', {
+    const r = await fetch(api('/api/driver/update-reservation'),{
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(body)
-    });
-    const data = await r.json();
-    if(!r.ok || !data.ok) throw new Error(data.error||'Save failed');
-    $('saveMsg').textContent = 'Saved ✓';
+    }).then(r=>r.json());
+    if(r.ok){
+      $('saveMsg').className='ok';
+      $('saveMsg').textContent='Saved.';
+    }else{
+      $('saveMsg').className='err';
+      $('saveMsg').textContent=r.error||'Save failed.';
+    }
   }catch(e){
-    $('saveMsg').textContent = e.message;
+    $('saveMsg').className='err';
+    $('saveMsg').textContent='Network error.';
   }
-}
+};
 
-async function reassign(to_slot_time){
+$('cancel').onclick = async () => {
+  if(!current) return;
+  if(!confirm('Cancel this reservation?')) return;
+  $('saveMsg').className='muted';
+  $('saveMsg').textContent='Cancelling...';
   try{
-    const site_id = +$('site').value;
-    const date = $('date').value;
-    const probe = ($('probe').value||'').trim();
-    const r = await fetch('/api/driver/reservation/reassign', {
+    const r = await fetch(api('/api/driver/cancel'),{
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ site_id, date, probe, to_slot_time })
-    });
-    const data = await r.json();
-    if(!r.ok || !data.ok) throw new Error(data.error||'Move failed');
-    $('msg').textContent = '';
-    await lookup(); // refresh details
+      body: JSON.stringify({ reservation_id: current.id, probe_code: probe, phone })
+    }).then(r=>r.json());
+    if(r.ok){
+      $('saveMsg').className='ok';
+      $('saveMsg').textContent='Canceled.';
+    }else{
+      $('saveMsg').className='err';
+      $('saveMsg').textContent=r.error||'Cancel failed.';
+    }
   }catch(e){
-    $('msg').textContent = e.message;
+    $('saveMsg').className='err';
+    $('saveMsg').textContent='Network error.';
   }
-}
-
-async function cancelRes(){
-  if(!confirm('Cancel your reservation?')) return;
-  try{
-    const site_id = +$('site').value;
-    const date = $('date').value;
-    const probe = ($('probe').value||'').trim();
-    const r = await fetch('/api/driver/reservation/cancel', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ site_id, date, probe })
-    });
-    const data = await r.json();
-    if(!r.ok || !data.ok) throw new Error(data.error||'Cancel failed');
-    $('cancelMsg').textContent = 'Reservation cancelled.';
-    $('panel').style.display = 'none';
-  }catch(e){
-    $('cancelMsg').textContent = e.message;
-  }
-}
-
-$('lookup').onclick = lookup;
-$('save').onclick = save;
-$('cancelBtn').onclick = cancelRes;
+};
 </script>
 </body>
 </html>
