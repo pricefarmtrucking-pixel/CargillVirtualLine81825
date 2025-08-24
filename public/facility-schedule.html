@@ -59,6 +59,7 @@
 
     <div class="field">
       <label>Disabled loads (auto)</label>
+      <!-- IMPORTANT: id + name is disabledLoads visually, but we POST as disabled_loads -->
       <input id="disabledLoads" type="text" inputmode="numeric" placeholder="10" />
     </div>
 
@@ -66,7 +67,7 @@
     <button id="publishBtn" class="btn primary" type="button">Publish Schedule</button>
   </div>
 
-  <div id="msg" class="help">We’ll auto‑disable about every Nth slot to hit your disabled total (East≈5m, West≈6m min interval).</div>
+  <div id="msg" class="help">We’ll auto‑disable about every Nth slot to reach the disabled total (East≈5m, West≈6m min interval).</div>
 
   <div id="slots" class="grid" aria-live="polite"></div>
 
@@ -151,8 +152,8 @@
       const open_time = normalizeHHMM(openEl.value);
       const close_time = normalizeHHMM(closeEl.value);
       const loads_target = Number(String(loadsEl.value).replace(/\D+/g,'')) || 0;
-      const disabled_slots = Number(String(disabledEl.value).replace(/\D+/g,'')) || 0;
-      return { site_id, date, open_time, close_time, loads_target, disabled_slots };
+      const disabled_loads = Number(String(disabledEl.value).replace(/\D+/g,'')) || 0; // ← exact API name
+      return { site_id, date, open_time, close_time, loads_target, disabled_loads };
     }
 
     async function preview() {
@@ -163,6 +164,7 @@
           return;
         }
         showMessage('Generating…');
+        // Backend preview must also accept disabled_loads and return items [{slot_time, disabled}]
         const res = await callJSON(`/api/sites/${v.site_id}/slots/preview`, v);
         renderSlots(res.items || []);
         const disabledCount = (res.items || []).filter(s => s.disabled).length;
@@ -180,6 +182,7 @@
           return;
         }
         showMessage('Publishing…');
+        // Schedule endpoint also expects disabled_loads
         const res = await callJSON(`/api/sites/${v.site_id}/schedule`, v);
         showMessage(`Published. Interval ≈ ${res.interval_min} min.`, 'ok');
         await preview();
