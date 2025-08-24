@@ -1,308 +1,431 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Facility Appointments</title>
-  <style>
-    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
-    .wrap { max-width:1100px; margin: 2rem auto; padding: 0 1rem; }
-    h1 { margin:.2rem 0 1rem; }
-    .toolbar { display:flex; flex-wrap:wrap; gap:.75rem; align-items:flex-end; margin-bottom:1rem; }
-    .toolbar .group { display:flex; gap:.5rem; align-items:center; }
-    label { font-size:.9rem; color:#555; }
-    input, select, button { padding:.5rem .6rem; border:1px solid #ccc; border-radius:8px; }
-    button { cursor:pointer; }
-    button.primary { background:#1e90ff; color:#fff; border:none; }
-    button.danger { background:#b00020; color:#fff; border:none; }
-    button.warn   { background:#ff9800; color:#fff; border:none; }
-    button.ghost  { background:#f7f7f7; }
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Facility Appointments</title>
+<link rel="stylesheet" href="styles.css" />
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;color:#111}
+  .wrap{max-width:1100px;margin:24px auto;padding:0 16px}
+  h1{font-size:24px;margin:0 0 16px}
+  .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0 16px}
+  select,input[type="time"],input[type="date"],input[type="text"]{padding:6px 8px;border:1px solid #ddd;border-radius:8px}
+  button{border:0;background:#1677ff;color:#fff;padding:8px 12px;border-radius:8px;cursor:pointer}
+  button.ghost{background:#eee;color:#333}
+  button.warn{background:#ff4d4f}
+  button.gray{background:#888}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:10px;border-bottom:1px solid #eee;font-size:14px;vertical-align:middle}
+  th{position:sticky;top:0;background:#fafafa;z-index:1}
+  .badge{display:inline-block;padding:.15rem .5rem;border-radius:999px;font-size:12px;border:1px solid #ddd;background:#fff}
+  .badge.open{border-color:#cbd5e1;color:#334155}
+  .badge.reserved{border-color:#16a34a;color:#166534;background:#f0fdf4}
+  .badge.disabled{border-color:#eab308;color:#92400e;background:#fffbeb}
+  .muted{color:#94a3b8}
+  .rowcheck{width:24px;text-align:center}
+  .actions{display:flex;gap:6px;align-items:center}
+  .spinner{width:18px;height:18px;border:2px solid #e5e7eb;border-top-color:#9ca3af;border-radius:50%;animation:spin .9s linear infinite;margin:10px auto}
+  @keyframes spin{to{transform:rotate(360deg)}}
 
-    table { width:100%; border-collapse:collapse; }
-    th, td { padding:.55rem .6rem; border-bottom:1px solid #eee; font-size:.94rem; }
-    th { text-align:left; background:#fafafa; position:sticky; top:0; z-index:1; }
-    tr.disabled { opacity:.5; }
-    tr.reserved { background: #fffef5; }
-    .muted { color:#666; font-size:.9rem; }
-    .tag { font-size:.75rem; padding:.15rem .4rem; border-radius:6px; background:#efefef; }
-    .tag.green { background:#e6f6ea; color:#0a7a28; }
-    .tag.red { background:#fde8e8; color:#b00020; }
-    .tag.gray { background:#eee; color:#555; }
-    #msg { min-height:1.2em; margin:.4rem 0 .8rem; color:#0a7a28; }
-    #msg.err { color:#b00020; }
-  </style>
+  /* Modal */
+  .modal-back{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center}
+  .modal{width:min(560px,calc(100vw - 32px));background:#fff;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.2);padding:16px}
+  .modal h3{margin:0 0 8px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .grid label{font-size:12px;color:#475569}
+  .grid input,.grid select{width:100%;padding:8px;border:1px solid #ddd;border-radius:8px}
+  .modal .row{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+</style>
 </head>
 <body>
-  <div class="wrap">
-    <h1>Facility Appointments</h1>
+<div class="wrap">
+  <h1>Facility Appointments</h1>
 
-    <div class="toolbar">
-      <div class="group">
-        <label>Site</label>
-        <select id="site">
-          <option value="1">EAST (1)</option>
-          <option value="2">WEST (2)</option>
-        </select>
-      </div>
-      <div class="group">
-        <label>Date</label>
-        <input id="date" type="date">
-      </div>
-      <div class="group">
-        <label>Show</label>
-        <select id="filterKind">
-          <option value="all">All</option>
-          <option value="open">Open only</option>
-          <option value="reserved">Reserved only</option>
-        </select>
-      </div>
-      <div class="group">
-        <label>From</label>
-        <input id="fromTime" type="time" value="00:00">
-      </div>
-      <div class="group">
-        <label>To</label>
-        <input id="toTime" type="time" value="23:59">
-      </div>
-      <div class="group">
-        <button id="btnRefresh" class="ghost">Refresh</button>
-      </div>
-    </div>
+  <div class="bar">
+    <label>Site
+      <select id="siteSel">
+        <option value="1">EAST (1)</option>
+        <option value="2">WEST (2)</option>
+      </select>
+    </label>
 
-    <div class="toolbar" style="gap:.5rem;">
-      <div class="group">
-        <button id="btnSelectAll" class="ghost">Select All</button>
-        <button id="btnClearSel" class="ghost">Clear</button>
-      </div>
-      <div class="group">
-        <button id="btnDisable" class="warn">Disable Selected</button>
-        <button id="btnEnable" class="ghost">Enable Selected</button>
-      </div>
-      <div class="group">
-        <button id="btnMassCancel" class="danger">Mass Cancel (Reserved)</button>
-      </div>
-      <div class="group">
-        <input id="notifyText" placeholder="Message to drivers…" style="width:260px;">
-        <button id="btnMassNotify" class="primary">Mass Notify</button>
-      </div>
-    </div>
+    <label>Date
+      <input id="dateSel" type="date">
+    </label>
 
-    <div id="msg"></div>
+    <label>Show
+      <select id="showSel">
+        <option value="all">All</option>
+        <option value="open">Open</option>
+        <option value="reserved">Reserved</option>
+        <option value="disabled">Disabled</option>
+      </select>
+    </label>
 
-    <table id="grid">
-      <thead>
-        <tr>
-          <th><input type="checkbox" id="checkAll"/></th>
-          <th>Time</th>
-          <th>Status</th>
-          <th>Probe Code</th>
-          <th>Driver</th>
-          <th>Plate</th>
-          <th>Vendor</th>
-          <th>Ticket/Farm</th>
-          <th>Est Qty</th>
-          <th>Phone</th>
-          <th>Flags</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+    <label>From
+      <input id="fromSel" type="time" value="00:00">
+    </label>
+    <label>To
+      <input id="toSel" type="time" value="23:59">
+    </label>
+
+    <button id="refreshBtn" class="ghost">Refresh</button>
   </div>
 
+  <div class="bar">
+    <button id="selectAll"  class="ghost">Select All</button>
+    <button id="clearSel"   class="ghost">Clear</button>
+    <button id="disableSel" class="gray">Disable Selected</button>
+    <button id="enableSel"  class="gray">Enable Selected</button>
+
+    <button id="massCancelBtn" class="warn">Mass Cancel (Reserved)</button>
+
+    <input id="notifyText" type="text" placeholder="Message to drivers…" style="min-width:260px">
+    <button id="massNotifyBtn">Mass Notify</button>
+  </div>
+
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th class="rowcheck"><input id="hdrCheck" type="checkbox"></th>
+        <th>Time</th>
+        <th>Status</th>
+        <th>Probe Code</th>
+        <th>Driver</th>
+        <th>Plate</th>
+        <th>Vendor</th>
+        <th>Ticket/Farm</th>
+        <th>Est Qty</th>
+        <th>Phone</th>
+        <th>Flags</th>
+      </tr>
+    </thead>
+    <tbody id="tbody">
+      <tr><td colspan="11"><div class="spinner"></div></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Edit/Create Modal -->
+<div id="editBack" class="modal-back">
+  <div class="modal" role="dialog" aria-modal="true">
+    <h3 id="editTitle">Edit Reservation</h3>
+    <div class="muted" id="editWhen"></div>
+    <div style="height:6px"></div>
+    <div class="grid">
+      <div>
+        <label>Driver</label>
+        <input id="f_driver" placeholder="Driver name">
+      </div>
+      <div>
+        <label>Phone</label>
+        <input id="f_phone" placeholder="+1XXXXXXXXXX">
+      </div>
+      <div>
+        <label>Plate</label>
+        <input id="f_plate" placeholder="ABC123">
+      </div>
+      <div>
+        <label>Vendor</label>
+        <input id="f_vendor" placeholder="Vendor / Company">
+      </div>
+      <div>
+        <label>Ticket/Farm</label>
+        <input id="f_ticket" placeholder="Ticket or Farm">
+      </div>
+      <div>
+        <label>Est. Amount</label>
+        <input id="f_amt" type="number" min="0" step="0.01" placeholder="1000">
+      </div>
+      <div>
+        <label>Unit</label>
+        <select id="f_unit">
+          <option>BUSHELS</option>
+          <option>TONS</option>
+          <option>LB</option>
+        </select>
+      </div>
+      <div>
+        <label>Probe Code (optional)</label>
+        <input id="f_probe" placeholder="4-digit (optional)">
+      </div>
+    </div>
+    <div class="row">
+      <button id="editCancel" class="ghost">Close</button>
+      <button id="editSave">Save</button>
+    </div>
+  </div>
+</div>
+
 <script>
-(() => {
-  const $ = sel => document.querySelector(sel);
-  const tbody = $('#grid tbody');
-  const msg = $('#msg');
-  let rows = [];
-  let selected = new Set(); // keys: `${slot_time}` for open OR `res:<id>` for reserved
+const $ = sel => document.querySelector(sel);
+const $$ = sel => Array.from(document.querySelectorAll(sel));
 
-  function setMsg(t, isErr=false){ msg.textContent=t||''; msg.className = isErr?'err':''; }
-  function hhmmToMin(t){ const [h,m]=t.split(':').map(n=>+n); return h*60+m; }
+const siteSel = $('#siteSel');
+const dateSel = $('#dateSel');
+const showSel = $('#showSel');
+const fromSel = $('#fromSel');
+const toSel   = $('#toSel');
+const tbody   = $('#tbody');
 
-  async function load() {
-    setMsg('');
-    const site_id = +$('#site').value;
-    const date = $('#date').value;
-    if (!date) return setMsg('Pick a date', true);
+const hdrCheck = $('#hdrCheck');
+const selectAll = $('#selectAll');
+const clearSel  = $('#clearSel');
+const disableSel= $('#disableSel');
+const enableSel = $('#enableSel');
+const refreshBtn= $('#refreshBtn');
 
-    const url = `/api/appointments?site_id=${site_id}&date=${encodeURIComponent(date)}`;
-    try{
-      const r = await fetch(url, { credentials:'include' });
-      const j = await r.json();
-      if(!r.ok || !j.ok) throw new Error(j.error || r.statusText);
-      rows = j.items || [];
-      render();
-    }catch(e){ setMsg('Load failed: '+(e?.message||e), true); }
+const massCancelBtn = $('#massCancelBtn');
+const massNotifyBtn = $('#massNotifyBtn');
+const notifyText    = $('#notifyText');
+
+const editBack  = $('#editBack');
+const editTitle = $('#editTitle');
+const editWhen  = $('#editWhen');
+const f_driver  = $('#f_driver');
+const f_phone   = $('#f_phone');
+const f_plate   = $('#f_plate');
+const f_vendor  = $('#f_vendor');
+const f_ticket  = $('#f_ticket');
+const f_amt     = $('#f_amt');
+const f_unit    = $('#f_unit');
+const f_probe   = $('#f_probe');
+const btnSave   = $('#editSave');
+const btnClose  = $('#editCancel');
+
+function todayISO(){ const d=new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10); }
+dateSel.value = todayISO();
+
+let rows = []; // {slot_time, is_workin, disabled, reservation_id, ...}
+
+// ------------ fetch + render -------------
+async function load() {
+  tbody.innerHTML = `<tr><td colspan="11"><div class="spinner"></div></td></tr>`;
+  const site_id = Number(siteSel.value);
+  const date = dateSel.value;
+  const qs = new URLSearchParams({site_id, date}).toString();
+  const res = await fetch(`/api/appointments?${qs}`);
+  const j = await res.json();
+  rows = (j.items||[]).slice();
+  render();
+}
+
+function render() {
+  const show = showSel.value;
+  const from = fromSel.value || '00:00';
+  const to   = toSel.value || '23:59';
+
+  const filt = rows.filter(r=>{
+    if (r.slot_time < from || r.slot_time > to) return false;
+    if (show==='open')     return !r.reservation_id && !r.disabled;
+    if (show==='reserved') return !!r.reservation_id;
+    if (show==='disabled') return !!r.disabled;
+    return true;
+  });
+
+  if (!filt.length) {
+    tbody.innerHTML = `<tr><td colspan="11" class="muted">No rows</td></tr>`;
+    return;
   }
 
-  function render() {
-    const kind = $('#filterKind').value;
-    const fromMin = hhmmToMin($('#fromTime').value || '00:00');
-    const toMin   = hhmmToMin($('#toTime').value || '23:59');
+  tbody.innerHTML = filt.map(r=>{
+    const status = r.reservation_id ? 'reserved' : (r.disabled? 'disabled' : 'open');
+    const badge  = `<button class="badge ${status} status-btn" data-time="${r.slot_time}" data-resid="${r.reservation_id||''}">${status}</button>`;
+    const probe  = r.queue_code || '—';
+    const est    = (r.est_amount!=null ? r.est_amount : '—') + (r.est_unit? ' '+r.est_unit : '');
+    const phone  = r.driver_phone || '—';
+    const flags  = r.is_workin ? '<span class="badge">work-in</span>' : (r.disabled? '<span class="badge disabled">disabled</span>' : '—');
 
-    const data = rows.filter(x=>{
-      const tmin = hhmmToMin(x.slot_time);
-      if (tmin < fromMin || tmin > toMin) return false;
-      const isReserved = !!x.reservation_id;
-      if (kind === 'open' && isReserved) return false;
-      if (kind === 'reserved' && !isReserved) return false;
-      return true;
+    return `
+      <tr data-time="${r.slot_time}" data-resid="${r.reservation_id||''}">
+        <td class="rowcheck"><input type="checkbox" class="rowSel"></td>
+        <td>${r.slot_time}</td>
+        <td>${badge}</td>
+        <td>${probe}</td>
+        <td>${r.driver_name || '—'}</td>
+        <td>${r.license_plate || '—'}</td>
+        <td>${r.vendor_name || '—'}</td>
+        <td>${r.farm_or_ticket || '—'}</td>
+        <td>${est}</td>
+        <td>${phone}</td>
+        <td>${flags}</td>
+      </tr>`;
+  }).join('');
+
+  // wire clicks
+  $$('.status-btn').forEach(b => b.addEventListener('click', onClickStatus));
+}
+
+function selectedTimes() {
+  return $$('#tbody tr').filter(tr=>tr.querySelector('.rowSel')?.checked)
+    .map(tr => ({ time: tr.dataset.time, reservation_id: tr.dataset.resid ? Number(tr.dataset.resid) : null }));
+}
+
+// ------------ enable/disable -------------
+async function bulkDisableEnable(disabled) {
+  const site_id = Number(siteSel.value);
+  const date = dateSel.value;
+  const picks = selectedTimes().filter(x => !x.reservation_id).map(x=>x.time);
+  if (!picks.length) { alert('Select open rows to ' + (disabled?'disable':'enable') + '.'); return; }
+
+  if (disabled) {
+    // disable via API you already have: POST /api/slots/disable
+    const r = await fetch('/api/slots/disable', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ site_id, date, slot_times: picks })
     });
-
-    tbody.innerHTML = '';
-    for (const r of data) {
-      const isRes = !!r.reservation_id;
-      const tr = document.createElement('tr');
-      tr.classList.toggle('reserved', isRes);
-      tr.classList.toggle('disabled', !!r.disabled);
-
-      const key = isRes ? `res:${r.reservation_id}` : r.slot_time;
-
-      const tdCheck = document.createElement('td');
-      const cb = document.createElement('input');
-      cb.type='checkbox';
-      cb.checked = selected.has(key);
-      cb.addEventListener('change', ()=>{
-        if(cb.checked) selected.add(key); else selected.delete(key);
-      });
-      tdCheck.appendChild(cb);
-
-      const tdTime = cell(r.slot_time);
-      const tdStatus = cell(isRes ? 'Reserved' : 'Open', isRes ? 'tag green' : 'tag gray');
-      const tdProbe  = cell(r.queue_code || '');
-      const tdDrv    = cell(r.driver_name || '');
-      const tdPlate  = cell(r.license_plate || '');
-      const tdVend   = cell(r.vendor_name || '');
-      const tdFarm   = cell(r.farm_or_ticket || '');
-      const tdQty    = cell(formatQty(r));
-      const tdPhone  = cell(r.driver_phone || '');
-      const tdFlags  = cell(flagsText(r));
-
-      tr.append(tdCheck, tdTime, tdStatus, tdProbe, tdDrv, tdPlate, tdVend, tdFarm, tdQty, tdPhone, tdFlags);
-      tbody.appendChild(tr);
-    }
+    const j = await r.json();
+    if (!j.ok) alert(j.error || 'Server error');
+  } else {
+    const r = await fetch('/api/slots/enable', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ site_id, date, slot_times: picks })
+    });
+    const j = await r.json();
+    if (!j.ok) alert(j.error || 'Server error');
   }
+  await load();
+}
 
-  function cell(txt, cls){ const td=document.createElement('td'); if(cls){const s=document.createElement('span'); s.className=cls; s.textContent=txt; td.appendChild(s);} else {td.textContent=txt;} return td; }
-  function formatQty(r){ if(r.est_amount==null) return ''; return `${r.est_amount} ${r.est_unit||''}`.trim(); }
-  function flagsText(r){
-    const f = [];
-    if (r.disabled) f.push('Disabled');
-    if (r.is_workin) f.push('Work-in');
-    return f.join(', ');
-  }
+// ------------ mass notify / cancel -------
+async function massNotify() {
+  const site_id = Number(siteSel.value);
+  const date = dateSel.value;
+  const msg = notifyText.value.trim();
+  const ids = selectedTimes().map(x=>x.reservation_id).filter(Boolean);
+  if (!ids.length) { alert('Select reserved rows.'); return; }
+  if (!msg) { alert('Enter a message first.'); return; }
 
-  // --- selection helpers
-  $('#checkAll').addEventListener('change', (e)=>{
-    const check = e.target.checked;
-    const kind = $('#filterKind').value;
-    const fromMin = hhmmToMin($('#fromTime').value || '00:00');
-    const toMin   = hhmmToMin($('#toTime').value || '23:59');
-
-    for (const r of rows) {
-      const tmin = hhmmToMin(r.slot_time);
-      if (tmin < fromMin || tmin > toMin) continue;
-      const isRes = !!r.reservation_id;
-      if (kind === 'open' && isRes) continue;
-      if (kind === 'reserved' && !isRes) continue;
-      const key = isRes ? `res:${r.reservation_id}` : r.slot_time;
-      if (check) selected.add(key); else selected.delete(key);
-    }
-    render();
+  const r = await fetch('/api/slots/mass-notify', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ site_id, date, reservation_ids: ids, message: msg })
   });
-  $('#btnSelectAll').addEventListener('click', ()=>{ $('#checkAll').checked=true; $('#checkAll').dispatchEvent(new Event('change')); });
-  $('#btnClearSel').addEventListener('click', ()=>{ selected.clear(); $('#checkAll').checked=false; render(); });
+  const j = await r.json();
+  if (!j.ok) alert(j.error||'Server error'); else alert(`Sent ${j.sent||j.notified||0}`);
+}
 
-  // --- toolbar events
-  $('#btnRefresh').addEventListener('click', load);
-  $('#site').addEventListener('change', load);
-  $('#date').addEventListener('change', load);
-  $('#filterKind').addEventListener('change', render);
-  $('#fromTime').addEventListener('change', render);
-  $('#toTime').addEventListener('change', render);
+async function massCancel() {
+  const site_id = Number(siteSel.value);
+  const date = dateSel.value;
+  const chosen = selectedTimes();
+  const ids = chosen.map(x=>x.reservation_id).filter(Boolean);
+  const openTimes = chosen.filter(x=>!x.reservation_id).map(x=>x.time);
 
-  // --- mass cancel (reserved ONLY) — prompts for reason and notifies drivers
-  $('#btnMassCancel').addEventListener('click', async ()=>{
-    const { site_id, date } = ctx();
-    const ids = Array.from(selected)
-      .filter(k => k.startsWith('res:'))
-      .map(k => Number(k.split(':')[1]))
-      .filter(Number.isInteger);
+  let reason = prompt('Reason to include in SMS (optional):','');
+  const notify = confirm('Send SMS to affected drivers? OK = Yes, Cancel = No');
 
-    if (!ids.length) return setMsg('Select reserved rows to cancel', true);
-
-    const reason = window.prompt('Enter a reason for cancellation (optional):', '');
-    // If user clicks Cancel in the prompt, we stop to avoid accidental sends
-    if (reason === null) return;
-
-    try{
-      const r = await fetch('/api/slots/mass-cancel', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ site_id, date, reservation_ids: ids, notify: true, reason: (reason||'') })
-      });
-      const j = await r.json();
-      if(!r.ok || j.error) throw new Error(j.error || r.statusText);
-      setMsg(`Canceled ${j.canceled || 0} reservation(s). ${j.notified || 0} driver(s) notified.`);
-      selected.clear(); $('#checkAll').checked=false;
-      await load();
-    }catch(e){ setMsg('Mass cancel failed: '+(e?.message||e), true); }
+  const r = await fetch('/api/slots/mass-cancel', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      site_id, date,
+      reservation_ids: ids,
+      slot_times: openTimes,
+      reason, notify
+    })
   });
+  const j = await r.json();
+  if (!j.ok) alert(j.error||'Server error');
+  await load();
+}
 
-  // --- mass notify (reserved only)
-  $('#btnMassNotify').addEventListener('click', async ()=>{
-    const { site_id, date } = ctx();
-    const ids = Array.from(selected)
-      .filter(k => k.startsWith('res:'))
-      .map(k => Number(k.split(':')[1]))
-      .filter(Number.isInteger);
-    const message = $('#notifyText').value.trim();
-    if (!ids.length) return setMsg('Select reserved rows to notify', true);
-    if (!message) return setMsg('Enter a message to send', true);
+// ------------ edit/create modal ----------
+let editing = null; // { site_id, date, slot_time, reservation_id }
 
-    try{
-      const r = await fetch('/api/slots/mass-notify', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ site_id, date, reservation_ids: ids, message })
-      });
-      const j = await r.json();
-      if(!r.ok || j.error) throw new Error(j.error || r.statusText);
-      setMsg(`Notified ${j.sent || 0} of ${j.targeted || 0}`);
-    }catch(e){ setMsg('Mass notify failed: '+(e?.message||e), true); }
-  });
+function openModal(data) {
+  editing = data;
+  editBack.style.display = 'flex';
+  editTitle.textContent = data.reservation_id ? 'Edit Reservation' : 'Create Reservation';
+  editWhen.textContent = `Site ${data.site_id===1?'EAST':'WEST'} • ${data.date} • ${data.slot_time}`;
 
-  // --- disable / enable selected (works for open or reserved)
-  async function toggleDisabled(disable) {
-    const { site_id, date } = ctx();
-    const slot_times = Array.from(selected).map(k => k.startsWith('res:') ? keyToTime(k) : k).filter(Boolean);
-    if (!slot_times.length) return setMsg('Select rows first', true);
-    try{
-      const r = await fetch('/api/slots/disable', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ site_id, date, slot_times, disable })
-      });
-      const j = await r.json();
-      if(!r.ok || j.error) throw new Error(j.error || r.statusText);
-      setMsg(`${disable?'Disabled':'Enabled'} ${j.updated || 0} slot(s)`);
-      await load();
-    }catch(e){ setMsg('Update failed: '+(e?.message||e), true); }
+  // Prefill fields
+  const r = rows.find(x=>x.slot_time===data.slot_time && (!!x.reservation_id)===!!data.reservation_id);
+  f_driver.value = r?.driver_name || '';
+  f_phone.value  = r?.driver_phone || '';
+  f_plate.value  = r?.license_plate || '';
+  f_vendor.value = r?.vendor_name || '';
+  f_ticket.value = r?.farm_or_ticket || '';
+  f_amt.value    = r?.est_amount ?? '';
+  f_unit.value   = r?.est_unit || 'BUSHELS';
+  f_probe.value  = r?.queue_code || '';
+}
+function closeModal(){ editBack.style.display='none'; editing=null; }
+
+async function saveModal() {
+  const payload = {
+    driver_name : f_driver.value.trim() || null,
+    driver_phone: f_phone.value.trim()  || null,
+    license_plate: f_plate.value.trim() || null,
+    vendor_name:  f_vendor.value.trim() || null,
+    farm_or_ticket: f_ticket.value.trim() || null,
+    est_amount: f_amt.value ? Number(f_amt.value) : null,
+    est_unit: f_unit.value || 'BUSHELS'
+  };
+
+  if (editing.reservation_id) {
+    // Update existing
+    const r = await fetch('/api/admin/update-reservation', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ reservation_id: editing.reservation_id, ...payload })
+    });
+    const j = await r.json();
+    if (!j.ok) return alert(j.error||'Server error');
+  } else {
+    // Create new reservation in open slot
+    const body = {
+      site_id: editing.site_id,
+      date: editing.date,
+      slot_time: editing.slot_time,
+      ...payload
+    };
+    if (f_probe.value.trim()) body.queue_code = f_probe.value.trim();
+
+    const r = await fetch('/api/admin/reserve', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const j = await r.json();
+    if (!j.ok) return alert(j.error||'Server error');
   }
-  $('#btnDisable').addEventListener('click', ()=> toggleDisabled(true));
-  $('#btnEnable').addEventListener('click',  ()=> toggleDisabled(false));
 
-  // helpers
-  function keyToTime(key){
-    if (!key.startsWith('res:')) return key;
-    const id = Number(key.split(':')[1]);
-    const r = rows.find(x => x.reservation_id === id);
-    return r ? r.slot_time : null;
-  }
-  function ctx(){ return { site_id:+$('#site').value, date:$('#date').value }; }
+  closeModal();
+  await load();
+}
 
-  // init
-  const today = new Date(); $('#date').value = today.toISOString().slice(0,10);
-  load();
-})();
+// click handler on status badge
+function onClickStatus(e) {
+  const btn = e.currentTarget;
+  const tr = btn.closest('tr');
+  const site_id = Number(siteSel.value);
+  const date = dateSel.value;
+  const slot_time = tr.dataset.time;
+  const reservation_id = tr.dataset.resid ? Number(tr.dataset.resid) : null;
+  openModal({ site_id, date, slot_time, reservation_id });
+}
+
+// ------------ events ----------------------
+refreshBtn.addEventListener('click', load);
+siteSel.addEventListener('change', load);
+dateSel.addEventListener('change', load);
+showSel.addEventListener('change', render);
+fromSel.addEventListener('change', render);
+toSel.addEventListener('change', render);
+
+selectAll.addEventListener('click', ()=> $$('#tbody .rowSel').forEach(cb=>cb.checked=true));
+clearSel .addEventListener('click', ()=> { hdrCheck.checked=false; $$('#tbody .rowSel').forEach(cb=>cb.checked=false); });
+hdrCheck.addEventListener('change', ()=> $$('#tbody .rowSel').forEach(cb=>cb.checked=hdrCheck.checked));
+
+disableSel.addEventListener('click', ()=>bulkDisableEnable(true));
+enableSel .addEventListener('click', ()=>bulkDisableEnable(false));
+massNotifyBtn.addEventListener('click', massNotify);
+massCancelBtn.addEventListener('click', massCancel);
+
+btnClose.addEventListener('click', closeModal);
+editBack.addEventListener('click', e=>{ if(e.target===editBack) closeModal(); });
+btnSave.addEventListener('click', saveModal);
+
+// initial load
+load();
 </script>
 </body>
 </html>
