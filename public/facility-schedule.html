@@ -21,7 +21,7 @@
     .ok { color:#0a7d26; margin-top:8px; }
     .grid { margin-top:16px; display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; }
     .slot { padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; text-align:center; background:#fafafa; }
-    .row { margin-top: 18px; display:flex; gap:12px; align-items:center; }
+    .slot.disabled { background:#fffbeb; border-color:#eab308; }
     .title { font-weight:600; font-size:20px; margin-bottom:12px; }
   </style>
 </head>
@@ -44,13 +44,11 @@
 
     <div class="field">
       <label>Open (HH:MM)</label>
-      <!-- TEXT instead of time wheel -->
       <input id="open" class="hhmm" type="text" inputmode="numeric" placeholder="07:00" autocomplete="off" />
     </div>
 
     <div class="field">
       <label>Close (HH:MM)</label>
-      <!-- TEXT instead of time wheel -->
       <input id="close" class="hhmm" type="text" inputmode="numeric" placeholder="17:00" autocomplete="off" />
     </div>
 
@@ -60,87 +58,65 @@
     </div>
 
     <div class="field">
-      <label>Work-ins/hr</label>
-      <input id="workins" type="text" inputmode="numeric" placeholder="0" />
+      <label>Disabled loads (auto)</label>
+      <input id="disabledLoads" type="text" inputmode="numeric" placeholder="10" />
     </div>
 
     <button id="previewBtn" class="btn" type="button">Generate Slots</button>
     <button id="publishBtn" class="btn primary" type="button">Publish Schedule</button>
   </div>
 
-  <div id="msg" class="help">Minimum interval auto-computed (East≈5m, West≈6m).</div>
+  <div id="msg" class="help">We’ll auto‑disable about every Nth slot to hit your disabled total (East≈5m, West≈6m min interval).</div>
 
   <div id="slots" class="grid" aria-live="polite"></div>
 
   <script>
-    // --- HHMM helpers --------------------------------------------------------
     const HHMM_RE = /^([01]?\d|2[0-3]):[0-5]\d$/;
+    const $ = id => document.getElementById(id);
 
     function normalizeHHMM(raw) {
-      // Accept: "700" "07:00" "7 00" "7-00" "0700" etc. Normalize -> "07:00"
       if (!raw) return '';
       let s = String(raw).trim();
-
-      // Replace non-digits with nothing, then reinject colon
       const digits = s.replace(/\D+/g, '');
-      if (digits.length === 4) {
-        s = digits.slice(0, 2) + ':' + digits.slice(2);
-      } else if (digits.length === 3) {
-        // e.g. "700" -> 7:00
-        s = digits.slice(0, 1) + ':' + digits.slice(1).padStart(2, '0');
-      } else if (digits.length === 1 || digits.length === 2) {
-        // treat as hour, add :00
-        s = digits + ':00';
-      } else if (digits.length === 0) {
-        s = '';
-      } else {
-        // If it already has a colon and matches, keep as-is
-        if (HHMM_RE.test(s)) return s;
-        // fallback: try first 2 + rest
-        s = digits.slice(0,2) + ':' + digits.slice(2,4);
-      }
-
-      // zero-pad hour
+      if (digits.length === 4) s = digits.slice(0,2)+':'+digits.slice(2);
+      else if (digits.length === 3) s = digits.slice(0,1)+':'+digits.slice(1).padStart(2,'0');
+      else if (digits.length === 1 || digits.length === 2) s = digits+':00';
+      else if (!HHMM_RE.test(s)) s = digits.slice(0,2)+':'+digits.slice(2,4);
       const m = s.match(/^(\d{1,2}):(\d{2})$/);
       if (!m) return s;
-      const hh = String(Math.min(23, parseInt(m[1], 10))).padStart(2,'0');
-      const mm = String(Math.min(59, parseInt(m[2], 10))).padStart(2,'0');
+      const hh = String(Math.min(23, parseInt(m[1],10))).padStart(2,'0');
+      const mm = String(Math.min(59, parseInt(m[2],10))).padStart(2,'0');
       return `${hh}:${mm}`;
     }
-
     function attachHHMM(el) {
       el.addEventListener('blur', () => {
         const v = normalizeHHMM(el.value);
         el.value = v;
         el.setCustomValidity(HHMM_RE.test(v) || v==='' ? '' : 'Enter HH:MM');
       });
-      el.addEventListener('input', () => {
-        el.setCustomValidity('');
-      });
+      el.addEventListener('input', () => el.setCustomValidity(''));
     }
 
-    // --- UI elements ---------------------------------------------------------
-    const siteEl = document.getElementById('site');
-    const dateEl = document.getElementById('date');
-    const openEl = document.getElementById('open');
-    const closeEl = document.getElementById('close');
-    const loadsEl = document.getElementById('loads');
-    const workinsEl = document.getElementById('workins');
-    const msgEl = document.getElementById('msg');
-    const gridEl = document.getElementById('slots');
+    const siteEl = $('site');
+    const dateEl = $('date');
+    const openEl = $('open');
+    const closeEl = $('close');
+    const loadsEl = $('loads');
+    const disabledEl = $('disabledLoads');
+    const msgEl = $('msg');
+    const gridEl = $('slots');
 
-    attachHHMM(openEl);
-    attachHHMM(closeEl);
+    attachHHMM(openEl); attachHHMM(closeEl);
 
-    // default date = today (local)
-    (function setToday(){
+    // defaults
+    (function init(){
       const d = new Date();
-      d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+      d.setMinutes(d.getMinutes()-d.getTimezoneOffset());
       dateEl.value = d.toISOString().slice(0,10);
       openEl.value = '07:00';
       closeEl.value = '17:00';
       loadsEl.value = '80';
-      workinsEl.value = '0';
+      disabledEl.value = '10';
     })();
 
     function showMessage(text, type='help') {
@@ -152,23 +128,20 @@
       gridEl.innerHTML = '';
       for (const s of list) {
         const div = document.createElement('div');
-        div.className = 'slot';
-        div.textContent = s.slot_time + (s.is_workin ? ' • Work-in' : '');
+        div.className = 'slot' + (s.disabled ? ' disabled' : '');
+        div.textContent = s.slot_time + (s.disabled ? ' • disabled' : '');
         gridEl.appendChild(div);
       }
     }
 
     async function callJSON(url, body) {
       const r = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
         body: JSON.stringify(body)
       });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        const msg = data && data.error ? data.error : `HTTP ${r.status}`;
-        throw new Error(msg);
-      }
+      if (!r.ok) throw new Error(data?.error || `HTTP ${r.status}`);
       return data;
     }
 
@@ -178,21 +151,22 @@
       const open_time = normalizeHHMM(openEl.value);
       const close_time = normalizeHHMM(closeEl.value);
       const loads_target = Number(String(loadsEl.value).replace(/\D+/g,'')) || 0;
-      const workins_per_hour = Number(String(workinsEl.value).replace(/\D+/g,'')) || 0;
-      return { site_id, date, open_time, close_time, loads_target, workins_per_hour };
+      const disabled_slots = Number(String(disabledEl.value).replace(/\D+/g,'')) || 0;
+      return { site_id, date, open_time, close_time, loads_target, disabled_slots };
     }
 
     async function preview() {
       try {
         const v = values();
         if (!HHMM_RE.test(v.open_time) || !HHMM_RE.test(v.close_time)) {
-          showMessage('Please enter Open/Close in HH:MM, e.g., 07:00 and 17:00', 'error');
+          showMessage('Enter Open/Close as HH:MM (e.g., 07:00 and 17:00)', 'error');
           return;
         }
         showMessage('Generating…');
         const res = await callJSON(`/api/sites/${v.site_id}/slots/preview`, v);
         renderSlots(res.items || []);
-        showMessage(`Generated ${res.items?.length ?? 0} slots. Interval ≈ ${res.interval_min} min.`);
+        const disabledCount = (res.items || []).filter(s => s.disabled).length;
+        showMessage(`Generated ${res.items?.length ?? 0} slots; disabled ${disabledCount}. Interval ≈ ${res.interval_min} min.`);
       } catch (e) {
         showMessage(`Error: ${e.message || e}`, 'error');
       }
@@ -202,13 +176,12 @@
       try {
         const v = values();
         if (!HHMM_RE.test(v.open_time) || !HHMM_RE.test(v.close_time)) {
-          showMessage('Please enter Open/Close in HH:MM, e.g., 07:00 and 17:00', 'error');
+          showMessage('Enter Open/Close as HH:MM (e.g., 07:00 and 17:00)', 'error');
           return;
         }
         showMessage('Publishing…');
         const res = await callJSON(`/api/sites/${v.site_id}/schedule`, v);
         showMessage(`Published. Interval ≈ ${res.interval_min} min.`, 'ok');
-        // Refresh preview after publish
         await preview();
       } catch (e) {
         showMessage(`Error: ${e.message || e}`, 'error');
@@ -218,7 +191,7 @@
     document.getElementById('previewBtn').addEventListener('click', preview);
     document.getElementById('publishBtn').addEventListener('click', publishNow);
 
-    // Auto-generate once on load
+    // Auto-preview on load
     preview();
   </script>
 </body>
