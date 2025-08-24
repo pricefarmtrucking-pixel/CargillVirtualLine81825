@@ -239,7 +239,8 @@ app.post('/api/sites/:id/slots/preview', (req, res) => {
 });
 
 // ------------------------- Schedule PUBLISH (overwrite) ----------------------
-// POST /api/sites/:id/schedule  { date, open_time, close_time, loads_target, disabled_slots }
+// POST /api/sites/:id/schedule
+// Body: { date, open_time, close_time, loads_target, disabled_slots }
 app.post('/api/sites/:id/schedule', (req, res) => {
   const DEBUG = process.env.NODE_ENV !== 'production';
 
@@ -253,7 +254,7 @@ app.post('/api/sites/:id/schedule', (req, res) => {
       disabled_slots = 0
     } = req.body || {};
 
-    // ---- normalize & validate ----------------------------------------------
+    // normalize & validate
     date = String(date || '').trim();
     open_time = String(open_time || '').trim();
     close_time = String(close_time || '').trim();
@@ -275,38 +276,37 @@ app.post('/api/sites/:id/schedule', (req, res) => {
     }
     if (disabled_slots < 0) disabled_slots = 0;
 
-    const toMin = (t) => { const [h,m] = t.split(':').map(Number); return h*60+m; };
-    const toHHMM = (mins) => `${String(Math.floor(mins/60)).padStart(2,'0')}:${String(mins%60).padStart(2,'0')}`;
+    const toMin  = t => { const [h,m] = t.split(':').map(Number); return h*60+m; };
+    const toHHMM = mins => `${String(Math.floor(mins/60)).padStart(2,'0')}:${String(mins%60).padStart(2,'0')}`;
 
-    // EAST(1)=5, WEST(2)=6 min min interval
+    // EAST(1)=5m min; WEST(2)=6m min
     const minInt = site_id === 2 ? 6 : 5;
     const start  = toMin(open_time);
     const end    = toMin(close_time);
-    if (!(end > start)) {
-      return res.status(400).json({ error: 'close must be after open' });
-    }
+    if (!(end > start)) return res.status(400).json({ error: 'close must be after open' });
 
     const span     = end - start;
     const interval = Math.max(minInt, Math.floor(span / Math.max(1, loads_target - 1)));
 
-    // Build target list of evenly spaced times
+    // Evenly spaced target times
     const targetTimes = [];
     for (let i = 0; i < loads_target; i++) {
       const t = start + i * interval;
       if (t >= start && t <= end) targetTimes.push(toHHMM(t));
     }
 
-    // Work out every‑Nth to disable (approx). e.g., loads=80, disabled=10 -> every 8th
+    // Decide which to disable: e.g. 80 total, 10 disabled -> every 8th
     const disableEvery = disabled_slots > 0 ? Math.round(loads_target / disabled_slots) : 0;
     const disableSet = new Set();
     if (disableEvery >= 2) {
       for (let i = disableEvery - 1; i < targetTimes.length; i += disableEvery) {
-        disableSet.add(targetTimes[i]); // mark these HH:MM as disabled
+        disableSet.add(targetTimes[i]);
       }
     }
 
+    // Transaction
     const tx = db.transaction(() => {
-      // 1) Upsert site settings (we keep disabled count implicit)
+      // Settings
       db.prepare(`
         INSERT INTO site_settings (site_id, date, loads_target, open_time, close_time, workins_per_hour)
         VALUES (?, ?, ?, ?, ?, 0)
@@ -318,26 +318,25 @@ app.post('/api/sites/:id/schedule', (req, res) => {
           updated_at       = CURRENT_TIMESTAMP
       `).run(site_id, date, loads_target, open_time, close_time);
 
-      // 2) Clear any holds for the day (keep reservations)
+      // Clear holds (keep reservations)
       db.prepare(`
         UPDATE time_slots
            SET hold_token=NULL, hold_expires_at=NULL
          WHERE site_id=? AND date=?
       `).run(site_id, date);
 
-      // 3) Insert/enable regular target times (is_workin=0). Respect reservations if they exist.
-      const insReg = db.prepare(`
+      // Upsert each target time (respect disabled flag)
+      const upsert = db.prepare(`
         INSERT INTO time_slots (site_id, date, slot_time, is_workin, reserved_truck_id, reserved_at, hold_token, hold_expires_at, disabled)
         VALUES (?, ?, ?, 0, NULL, NULL, NULL, NULL, ?)
         ON CONFLICT(site_id, date, slot_time, is_workin) DO UPDATE SET
           disabled = excluded.disabled
       `);
       for (const t of targetTimes) {
-        const wantDisabled = disableSet.has(t) ? 1 : 0;
-        insReg.run(site_id, date, t, wantDisabled);
+        upsert.run(site_id, date, t, disableSet.has(t) ? 1 : 0);
       }
 
-      // 4) Soft‑disable any *open* regular slots not in the new target list.
+      // Soft‑disable *open* regular slots not in the new target list
       if (targetTimes.length) {
         const ph = targetTimes.map(() => '?').join(',');
         db.prepare(`
@@ -360,6 +359,15 @@ app.post('/api/sites/:id/schedule', (req, res) => {
         `).run(site_id, date);
       }
     });
+
+    // Run tx and respond
+    tx();
+    return res.json({ ok: true, interval_min: interval });
+  } catch (e) {
+    console.error('/api/sites/:id/schedule', e);
+    return res.status(500).json({ error: 'server error' });
+  }
+});
 
     // run the tx and respond (keep returns INSIDE the route)
     try {
