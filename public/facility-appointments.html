@@ -10,7 +10,7 @@
   .wrap{max-width:1100px;margin:24px auto;padding:0 16px}
   h1{font-size:24px;margin:0 0 16px}
   .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0 16px}
-  select,input[type="time"],input[type="date"],input[type="text"]{padding:6px 8px;border:1px solid #ddd;border-radius:8px}
+  select,input[type="time"],input[type="date"],input[type="text"],input[type="number"]{padding:6px 8px;border:1px solid #ddd;border-radius:8px}
   button{border:0;background:#1677ff;color:#fff;padding:8px 12px;border-radius:8px;cursor:pointer}
   button.ghost{background:#eee;color:#333}
   button.warn{background:#ff4d4f}
@@ -83,6 +83,32 @@
 
     <input id="notifyText" type="text" placeholder="Message to drivers…" style="min-width:260px">
     <button id="massNotifyBtn">Mass Notify</button>
+  </div>
+
+  <!-- Append Times (add more open slots without touching existing ones) -->
+  <div class="bar" style="border-top:1px solid #eee;padding-top:8px;">
+    <strong>Add Times:</strong>
+    <label>Start
+      <input id="addStart" type="time" value="15:00">
+    </label>
+    <label>End
+      <input id="addEnd" type="time" value="17:00">
+    </label>
+    <label title="Choose one: Loads OR Interval">Loads
+      <input id="addLoads" type="number" min="1" step="1" placeholder="20" style="width:90px">
+    </label>
+    <span>or</span>
+    <label>Interval (min)
+      <input id="addInterval" type="number" min="1" step="1" placeholder="" style="width:110px">
+    </label>
+    <label>
+      Kind
+      <select id="addKind">
+        <option value="0">Regular</option>
+        <option value="1">Work-in</option>
+      </select>
+    </label>
+    <button id="addTimesBtn">Add Times</button>
   </div>
 
   <table id="tbl">
@@ -180,6 +206,13 @@ const massCancelBtn = $('#massCancelBtn');
 const massNotifyBtn = $('#massNotifyBtn');
 const notifyText    = $('#notifyText');
 
+const addStart    = $('#addStart');
+const addEnd      = $('#addEnd');
+const addLoads    = $('#addLoads');
+const addInterval = $('#addInterval');
+const addKind     = $('#addKind');
+const addTimesBtn = $('#addTimesBtn');
+
 const editBack  = $('#editBack');
 const editTitle = $('#editTitle');
 const editWhen  = $('#editWhen');
@@ -208,6 +241,7 @@ async function load() {
   const res = await fetch(`/api/appointments?${qs}`);
   const j = await res.json();
   rows = (j.items||[]).slice();
+  hdrCheck.checked = false;
   render();
 }
 
@@ -270,7 +304,6 @@ async function bulkDisableEnable(disabled) {
   if (!picks.length) { alert('Select open rows to ' + (disabled?'disable':'enable') + '.'); return; }
 
   if (disabled) {
-    // disable via API you already have: POST /api/slots/disable
     const r = await fetch('/api/slots/disable', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ site_id, date, slot_times: picks })
@@ -329,6 +362,39 @@ async function massCancel() {
   await load();
 }
 
+// ------------ Append Times ---------------
+async function appendTimes() {
+  const site_id = Number(siteSel.value);
+  const date    = dateSel.value;
+  const start   = addStart.value;
+  const end     = addEnd.value;
+  const loads   = addLoads.value ? Number(addLoads.value) : null;
+  const im      = addInterval.value ? Number(addInterval.value) : null;
+  const is_workin = Number(addKind.value) === 1 ? 1 : 0;
+
+  if (!site_id || !date || !start || !end) {
+    alert('Site, date, start, and end are required.');
+    return;
+  }
+  if (!loads && !im) {
+    alert('Enter either Loads or Interval (minutes).');
+    return;
+  }
+
+  const body = { site_id, date, start, end, is_workin };
+  if (im) body.interval_min = im; else body.loads_target = loads;
+
+  const r = await fetch('/api/slots/add-times', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  });
+  const j = await r.json();
+  if (!j.ok) { alert(j.error || 'Server error'); return; }
+
+  alert(`Added/updated ${j.inserted} time(s).`);
+  await load();
+}
+
 // ------------ edit/create modal ----------
 let editing = null; // { site_id, date, slot_time, reservation_id }
 
@@ -338,7 +404,6 @@ function openModal(data) {
   editTitle.textContent = data.reservation_id ? 'Edit Reservation' : 'Create Reservation';
   editWhen.textContent = `Site ${data.site_id===1?'EAST':'WEST'} • ${data.date} • ${data.slot_time}`;
 
-  // Prefill fields
   const r = rows.find(x=>x.slot_time===data.slot_time && (!!x.reservation_id)===!!data.reservation_id);
   f_driver.value = r?.driver_name || '';
   f_phone.value  = r?.driver_phone || '';
@@ -363,7 +428,6 @@ async function saveModal() {
   };
 
   if (editing.reservation_id) {
-    // Update existing
     const r = await fetch('/api/admin/update-reservation', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ reservation_id: editing.reservation_id, ...payload })
@@ -371,7 +435,6 @@ async function saveModal() {
     const j = await r.json();
     if (!j.ok) return alert(j.error||'Server error');
   } else {
-    // Create new reservation in open slot
     const body = {
       site_id: editing.site_id,
       date: editing.date,
@@ -419,6 +482,8 @@ disableSel.addEventListener('click', ()=>bulkDisableEnable(true));
 enableSel .addEventListener('click', ()=>bulkDisableEnable(false));
 massNotifyBtn.addEventListener('click', massNotify);
 massCancelBtn.addEventListener('click', massCancel);
+
+addTimesBtn.addEventListener('click', appendTimes);
 
 btnClose.addEventListener('click', closeModal);
 editBack.addEventListener('click', e=>{ if(e.target===editBack) closeModal(); });
