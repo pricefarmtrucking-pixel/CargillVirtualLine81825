@@ -26,6 +26,7 @@ const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 
 db.exec(`
+
 CREATE TABLE IF NOT EXISTS site_settings (
   site_id INTEGER NOT NULL,
   date TEXT NOT NULL,
@@ -75,6 +76,18 @@ CREATE TABLE IF NOT EXISTS otp_codes (
   consumed_at TEXT
 );
 `);
+// --- Ensure `disabled` column exists on time_slots (safe to call every boot)
+function tableHasColumn(table, col) {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all();
+  return rows.some(r => r.name === col);
+}
+function ensureDisabledColumn() {
+  if (!tableHasColumn('time_slots', 'disabled')) {
+    db.exec(`ALTER TABLE time_slots ADD COLUMN disabled INTEGER DEFAULT 0;`);
+    console.log('✓ Added time_slots.disabled');
+  }
+}
+ensureDisabledColumn();
 
 // ------------------------- Twilio (optional) ---------------------------------
 let twilio = null;
@@ -403,21 +416,27 @@ app.get('/api/sites/:id/slots', (req, res) => {
     expireHolds();
     const site_id = +req.params.id;
     const date    = String(req.query.date || todayISO());
-    if (!site_id) return res.status(400).json({ error:'site_id required' });
+    if (!site_id) return res.status(400).json({ error: 'site_id required' });
 
     const rows = db.prepare(`
       SELECT s.slot_time
       FROM time_slots s
       LEFT JOIN slot_reservations r
-        ON r.site_id=s.site_id AND r.date=s.date AND r.slot_time=s.slot_time
-      WHERE s.site_id=? AND s.date=? AND r.id IS NULL AND s.hold_token IS NULL
+        ON r.site_id = s.site_id
+       AND r.date    = s.date
+       AND r.slot_time = s.slot_time
+      WHERE s.site_id = ?
+        AND s.date    = ?
+        AND (s.disabled IS NULL OR s.disabled = 0)  -- hide disabled
+        AND r.id IS NULL                             -- not reserved
+        AND s.hold_token IS NULL                     -- not on hold
       ORDER BY time(s.slot_time)
     `).all(site_id, date);
 
     res.json(rows.map(r => r.slot_time));
   } catch (e) {
     console.error('/api/sites/:id/slots', e);
-    res.status(500).json({ error:'server error' });
+    res.status(500).json({ error: 'server error' });
   }
 });
 
