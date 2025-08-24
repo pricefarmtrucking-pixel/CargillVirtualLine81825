@@ -1,4 +1,4 @@
-// index.js — Cargill Virtual Line (ESM) — interval override + SSE push
+// index.js — Cargill Virtual Line (ESM) — interval override + SSE push + driver self-service
 import 'dotenv/config';
 import express from 'express';
 import cookieParser from 'cookie-parser';
@@ -657,6 +657,76 @@ app.post('/api/slots/probe-upsert', async (req, res) => {
   }
 });
 
+// ------------------------- Driver Self‑Service (view/edit by probe code) -----
+app.post('/api/driver/reservation', (req, res) => {
+  try {
+    const { site_id, date, probe_code } = req.body || {};
+    if (!site_id || !date || !probe_code) {
+      return res.status(400).json({ error: 'site_id, date, probe_code required' });
+    }
+
+    const row = db.prepare(`
+      SELECT r.*, s.disabled
+      FROM slot_reservations r
+      JOIN time_slots s
+        ON s.site_id = r.site_id
+       AND s.date    = r.date
+       AND s.slot_time = r.slot_time
+      WHERE r.site_id=? AND r.date=? AND r.queue_code=?
+      LIMIT 1
+    `).get(site_id, date, probe_code);
+
+    if (!row) return res.status(404).json({ error: 'not found' });
+
+    return res.json({ ok: true, reservation: row });
+  } catch (e) {
+    console.error('/api/driver/reservation', e);
+    res.status(500).json({ error: 'server error' });
+  }
+});
+
+app.post('/api/driver/update-reservation', (req, res) => {
+  try {
+    const {
+      reservation_id,
+      probe_code,
+      driver_name,
+      license_plate,
+      vendor_name,
+      farm_or_ticket
+    } = req.body || {};
+
+    if (!reservation_id || !probe_code) {
+      return res.status(400).json({ error: 'reservation_id and probe_code required' });
+    }
+
+    const row = db.prepare(`
+      SELECT * FROM slot_reservations
+      WHERE id=? AND queue_code=?
+    `).get(reservation_id, probe_code);
+
+    if (!row) return res.status(403).json({ error: 'forbidden' });
+
+    db.prepare(`
+      UPDATE slot_reservations SET
+        driver_name = ?, license_plate = ?, vendor_name = ?, farm_or_ticket = ?
+      WHERE id=? AND queue_code=?
+    `).run(
+      driver_name || null,
+      license_plate || null,
+      vendor_name || null,
+      farm_or_ticket || null,
+      reservation_id,
+      probe_code
+    );
+
+    return res.json({ ok:true });
+  } catch (e) {
+    console.error('/api/driver/update-reservation', e);
+    res.status(500).json({ error:'server error' });
+  }
+});
+
 // ------------------------- Cancel / Reassign ---------------------------------
 app.post('/api/slots/cancel', (req, res) => {
   const { reservation_id } = req.body || {};
@@ -693,6 +763,7 @@ app.post('/api/slots/reassign', (req, res) => {
     SELECT * FROM time_slots WHERE site_id=? AND date=? AND slot_time=?
   `).get(r.site_id, r.date, to_slot_time);
   if (tgt.reserved_truck_id) return res.status(409).json({ error:'target slot reserved' });
+  if (tgt.disabled) return res.status(409).json({ error:'target slot disabled' });
 
   const tx = db.transaction(() => {
     db.prepare(`
@@ -733,7 +804,7 @@ app.post('/api/admin/update-reservation', async (req, res) => {
              vendor_name=?, farm_or_ticket=?, est_amount=?, est_unit=?
        WHERE id=?
     `).run(driver_name, driver_phone, license_plate,
-           vendor_name, farm_or_ticket, est_amount, est_unit, reservation_id);
+           vendor_name, farm_or_ticket, est_amount, (est_unit||'BUSHELS').toUpperCase(), reservation_id);
 
     if (driver_phone) {
       const msg = `Cargill: Your ${row.date} ${row.slot_time} reservation has been updated. Probe code: ${row.queue_code||'N/A'}.`;
@@ -756,6 +827,15 @@ app.post('/api/admin/reserve', async (req, res) => {
     if (!site_id || !date || !slot_time) {
       return res.status(400).json({ error:'site_id, date, slot_time required' });
     }
+
+    // Ensure slot exists and is not disabled/reserved
+    const slot = db.prepare(`
+      SELECT * FROM time_slots
+      WHERE site_id=? AND date=? AND slot_time=? AND (disabled IS NULL OR disabled=0)
+    `).get(site_id, date, slot_time);
+
+    if (!slot) return res.status(404).json({ error: 'slot not found or disabled' });
+    if (slot.reserved_truck_id) return res.status(409).json({ error: 'slot already reserved' });
 
     const probe = queue_code || String(Math.floor(1000 + Math.random()*9000));
 
