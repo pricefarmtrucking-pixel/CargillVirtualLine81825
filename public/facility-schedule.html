@@ -8,7 +8,7 @@
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; color: #111; }
     .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    .toolbar label { font-size: 12px; color: #555; display:block; }
+    .toolbar label { font-size: 12px; color:#555; display:block; }
     .toolbar .field { display:flex; flex-direction:column; gap:4px; }
     input[type="text"], input[type="date"], select { padding:8px 10px; border:1px solid #d0d7de; border-radius:8px; font-size:14px; min-width:120px; }
     input.hhmm { width:110px; }
@@ -59,7 +59,7 @@
 
     <div class="field">
       <label>Disabled loads (auto)</label>
-      <!-- IMPORTANT: id + name is disabledLoads visually, but we POST as disabled_loads -->
+      <!-- NOTE: server expects the field name "disabled_loads" -->
       <input id="disabledLoads" type="text" inputmode="numeric" placeholder="10" />
     </div>
 
@@ -67,7 +67,7 @@
     <button id="publishBtn" class="btn primary" type="button">Publish Schedule</button>
   </div>
 
-  <div id="msg" class="help">We’ll auto‑disable about every Nth slot to reach the disabled total (East≈5m, West≈6m min interval).</div>
+  <div id="msg" class="help">We’ll auto‑disable about every Nth slot to hit your disabled total (East≈5m, West≈6m min interval).</div>
 
   <div id="slots" class="grid" aria-live="polite"></div>
 
@@ -146,13 +146,14 @@
       return data;
     }
 
+    // IMPORTANT: use "disabled_loads" (what the server expects)
     function values() {
       const site_id = Number(siteEl.value);
       const date = dateEl.value;
       const open_time = normalizeHHMM(openEl.value);
       const close_time = normalizeHHMM(closeEl.value);
       const loads_target = Number(String(loadsEl.value).replace(/\D+/g,'')) || 0;
-      const disabled_loads = Number(String(disabledEl.value).replace(/\D+/g,'')) || 0; // ← exact API name
+      const disabled_loads = Number(String(disabledEl.value).replace(/\D+/g,'')) || 0;
       return { site_id, date, open_time, close_time, loads_target, disabled_loads };
     }
 
@@ -164,7 +165,6 @@
           return;
         }
         showMessage('Generating…');
-        // Backend preview must also accept disabled_loads and return items [{slot_time, disabled}]
         const res = await callJSON(`/api/sites/${v.site_id}/slots/preview`, v);
         renderSlots(res.items || []);
         const disabledCount = (res.items || []).filter(s => s.disabled).length;
@@ -182,7 +182,6 @@
           return;
         }
         showMessage('Publishing…');
-        // Schedule endpoint also expects disabled_loads
         const res = await callJSON(`/api/sites/${v.site_id}/schedule`, v);
         showMessage(`Published. Interval ≈ ${res.interval_min} min.`, 'ok');
         await preview();
