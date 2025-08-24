@@ -258,6 +258,7 @@ app.post('/api/sites/:id/slots/preview', (req, res) => {
 // Body: { date, open_time, close_time, loads_target, disabled_slots }
 app.post('/api/sites/:id/schedule', (req, res) => {
   const DEBUG = process.env.NODE_ENV !== 'production';
+
   try {
     const site_id = Number(req.params.id);
     let {
@@ -307,24 +308,24 @@ app.post('/api/sites/:id/schedule', (req, res) => {
       if (t >= start && t <= end) times.push(toHHMM(t));
     }
 
-    // Decide which indices to disable
+    // Decide which indices to disable (spread evenly)
     const total = times.length;
-    let d = Math.max(0, Math.min(disabled_slots, Math.max(0, total-1)));
+    let d = Math.max(0, Math.min(disabled_slots, Math.max(0, total - 1)));
     const disabledIndex = new Set();
     if (d > 0) {
-      const step = Math.max(2, Math.round(total / d));
+      const step = Math.max(2, Math.round(total / d)); // e.g., 80/10 = 8
       let marked = 0;
-      for (let i = step-1; i < total && marked < d; i += step) {
-        disabledIndex.add(i);
-        marked++;
+      for (let i = step - 1; i < total && marked < d; i += step) {
+        disabledIndex.add(i); marked++;
       }
-      for (let i = total-1; marked < d && i >= 0; i--) {
+      // top up if rounding left us short
+      for (let i = total - 1; marked < d && i >= 0; i--) {
         if (!disabledIndex.has(i)) { disabledIndex.add(i); marked++; }
       }
     }
 
     const tx = db.transaction(() => {
-      // 1) Save/update settings (we can store disabled count in workins_per_hour for now = 0)
+      // Settings (store workins_per_hour=0; we’re using disabled slots instead)
       db.prepare(`
         INSERT INTO site_settings (site_id, date, loads_target, open_time, close_time, workins_per_hour)
         VALUES (?, ?, ?, ?, ?, 0)
@@ -336,15 +337,15 @@ app.post('/api/sites/:id/schedule', (req, res) => {
           updated_at       = CURRENT_TIMESTAMP
       `).run(site_id, date, loads_target, open_time, close_time);
 
-      // 2) Clear holds (keep reservations)
+      // Clear holds for that day (keep reservations)
       db.prepare(`
         UPDATE time_slots
            SET hold_token=NULL, hold_expires_at=NULL
          WHERE site_id=? AND date=?
       `).run(site_id, date);
 
-      // 3) Upsert the target times with desired disabled flags
-      const ins = db.prepare(`
+      // Upsert target times with disabled flags
+      const upsert = db.prepare(`
         INSERT INTO time_slots (site_id, date, slot_time, is_workin,
                                 reserved_truck_id, reserved_at, hold_token, hold_expires_at, disabled)
         VALUES (?, ?, ?, 0, NULL, NULL, NULL, NULL, ?)
@@ -353,10 +354,10 @@ app.post('/api/sites/:id/schedule', (req, res) => {
       `);
       times.forEach((t, idx) => {
         const dis = disabledIndex.has(idx) ? 1 : 0;
-        ins.run(site_id, date, t, dis);
+        upsert.run(site_id, date, t, dis);
       });
 
-      // 4) Soft‑disable any *open* regular slots not in the new target list
+      // Soft‑disable any *open* slots not in the new target list (don’t touch reserved)
       if (times.length) {
         const placeholders = times.map(() => '?').join(',');
         db.prepare(`
@@ -380,29 +381,15 @@ app.post('/api/sites/:id/schedule', (req, res) => {
       }
     });
 
-    try { tx(); }
-    catch (sqlErr) {
-      console.error('SQL error in /api/sites/:id/schedule:', sqlErr);
-      return res.status(500).json({ error: DEBUG ? String(sqlErr) : 'server error' });
-    }
+    // execute the transaction
+    tx();
 
+    // success
     return res.json({ ok: true, interval_min: interval });
-  } catch (e) {
-    console.error('/api/sites/:id/schedule', e);
-    return res.status(500).json({ error: 'server error' });
-  }
-});
 
-    try { tx(); }
-    catch (sqlErr) {
-      console.error('SQL error in /api/sites/:id/schedule:', sqlErr);
-      return res.status(500).json({ error: DEBUG ? String(sqlErr) : 'server error' });
-    }
-
-    return res.json({ ok: true, interval_min: interval });
-  } catch (e) {
-    console.error('/api/sites/:id/schedule', e);
-    return res.status(500).json({ error: 'server error' });
+  } catch (sqlErr) {
+    console.error('SQL error in /api/sites/:id/schedule:', sqlErr);
+    return res.status(500).json({ error: (process.env.NODE_ENV !== 'production') ? String(sqlErr) : 'server error' });
   }
 });
 
