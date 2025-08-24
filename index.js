@@ -734,7 +734,7 @@ app.post('/api/admin/update-reservation', async (req, res) => {
 
     if (driver_phone) {
       const msg = `Cargill: Your ${row.date} ${row.slot_time} reservation has been updated. Probe code: ${row.queue_code||'N/A'}.`;
-      await sendSMS(driver_phone, msg);
+      await sendSMS(driver_phone, msg);   // 
     }
 
     res.json({ ok:true });
