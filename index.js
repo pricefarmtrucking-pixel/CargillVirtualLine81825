@@ -37,6 +37,7 @@ const extraAllowed = ['+15636083369', '+15639205636'];
 for (const num of extraAllowed) {
   ADMIN_WHITELIST.add(num);
   PROBE_WHITELIST.add(num)
+}
 
 // ------------------------- DB (idempotent schema) ----------------------------
 const db = new Database(DB_PATH);
