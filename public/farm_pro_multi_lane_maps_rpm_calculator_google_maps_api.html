@@ -1,0 +1,568 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FarmPro • Multi‑Lane Map & Rate Calculator</title>
+  <style>
+    :root{
+      --bg:#0b1016; --panel:#111924; --muted:#9fb0c2; --text:#e8f0fb; --accent:#48c78e; --accent2:#1a73e8; --danger:#ff6b6b;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+    .app{display:grid;grid-template-columns:390px 1fr;min-height:100vh}
+    .left{background:var(--panel);padding:16px;overflow:auto;border-right:1px solid #1b2532}
+    .right{position:relative}
+    h1{margin:0 0 10px;font-size:18px;letter-spacing:.2px}
+    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .controls{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 12px}
+    label{font-size:12px;color:var(--muted)}
+    input[type="text"], input[type="number"]{width:100%;padding:10px 12px;border-radius:10px;border:1px solid #203044;background:#0e1520;color:var(--text)}
+    input[type="checkbox"]{transform:scale(1.1)}
+    .btn{padding:10px 12px;border-radius:10px;border:1px solid #2a3a4f;background:#162233;color:var(--text);cursor:pointer}
+    .btn:hover{filter:brightness(1.1)}
+    .btn.primary{background:var(--accent2);border-color:#1e5fbc}
+    .btn.success{background:var(--accent);border-color:#2da373}
+    .btn.ghost{background:#101827;border-color:#243244}
+    .section{padding:10px 0;border-top:1px solid #1b2532;margin-top:10px}
+    .lane{background:#0e1520;border:1px solid #233247;border-radius:12px;padding:10px;margin:8px 0}
+    .lane > .row{margin:8px 0}
+    .lane h3{margin:0;font-size:14px;color:#cfe2f7}
+    .lane small{color:var(--muted)}
+    .del{background:transparent;border:1px solid #34465f;border-radius:8px;color:#a3b6ce;padding:6px 8px;cursor:pointer}
+    .del:hover{background:#182334}
+    #map{position:absolute;inset:0}
+    table{width:100%;border-collapse:collapse;margin-top:10px}
+    th,td{padding:8px;border-bottom:1px solid #223045;text-align:right}
+    th{color:#c3d4e9;font-weight:600}
+    td:first-child, th:first-child{text-align:left}
+    tfoot td{font-weight:700}
+    .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid #2a3a4f;border-radius:999px}
+    .muted{color:var(--muted)}
+    .note{font-size:12px;color:var(--muted);margin-top:8px}
+    .kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;background:#0b1320;border:1px solid #22334a;border-radius:6px;padding:2px 6px}
+    .tag{font-size:11px;background:#0b1320;border:1px solid #22334a;border-radius:999px;padding:2px 6px;color:#cfe2f7}
+    .legend{display:flex;gap:8px;align-items:center}
+    .swatch{width:18px;height:3px;border-radius:2px}
+  </style>
+  <!--
+    SETUP
+    1) Replace AIzaSyAX9GFUEGbzuUx3KefbZw9_a0_eDOiNFf0 at the bottom with your key (has Maps JavaScript + Places enabled).
+    2) Open this file in a browser. Nothing else required.
+  -->
+</head>
+<body>
+  <div class="app">
+    <aside class="left">
+      <h1>FarmPro • Multi‑Lane Map & RPM Calculator</h1>
+      <div class="row legend">
+        <span class="tag">Legend</span>
+        <span class="swatch" style="background:#1a73e8"></span><span class="muted">Loaded</span>
+        <span class="swatch" style="background:linear-gradient(90deg,#808080 33%,transparent 33%,transparent 66%,#808080 66%)"></span><span class="muted">Deadhead</span>
+      </div>
+
+      <div class="section">
+        <div class="row">
+          <div style="flex:1">
+            <label>Base / Yard (optional)</label>
+            <input id="base" type="text" placeholder="e.g., Fairbank, IA" />
+          </div>
+        </div>
+        <div class="row">
+          <label class="pill"><input id="includeStartDH" type="checkbox" checked> Include deadhead from Base → first Origin</label>
+          <label class="pill"><input id="returnToBase" type="checkbox"> Add final deadhead from last Destination → Base</label>
+        </div>
+        <div class="controls">
+          <button class="btn success" id="addLane">+ Add lane</button>
+          <button class="btn primary" id="calc">Calculate & Map</button>
+          <button class="btn ghost" id="sample">Load sample</button>
+          <button class="btn" id="clearAll">Clear</button>
+        </div>
+      </div>
+
+      <div id="lanes"></div>
+
+      <div class="section">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <div>
+            <span class="tag">Results</span>
+          </div>
+          <div class="row">
+            <button class="btn" id="exportCsv">Export CSV</button>
+            <button class="btn" id="emailBtn">Generate Email</button>
+          </div>
+        </div>
+        <table id="resultsTable" hidden>
+          <thead>
+            <tr>
+              <th>Lane</th>
+              <th>Origin → Destination</th>
+              <th>Loaded mi</th>
+              <th>Deadhead mi</th>
+              <th>Rate $/ton</th>
+              <th>Tons</th>
+              <th>Gross $</th>
+              <th>Lane RPM</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+          <tfoot>
+            <tr>
+              <td colspan="2">Totals</td>
+              <td id="tLoaded" ></td>
+              <td id="tDeadhead"></td>
+              <td></td><td></td>
+              <td id="tGross"></td>
+              <td id="tRPM"></td>
+            </tr>
+          </tfoot>
+        </table>
+        <div class="note">Overall RPM = Total Gross ÷ (Loaded + Deadhead). Also shown in email export with a loaded‑only RPM.</div>
+      </div>
+    </aside>
+
+    <main class="right">
+      <div id="map"></div>
+    </main>
+  </div>
+
+  <template id="laneTmpl">
+    <div class="lane">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <h3>Lane <span class="laneIndex"></span> <small class="muted">(Origin → Destination)</small></h3>
+        <button class="del" title="Remove lane">Remove</button>
+      </div>
+      <div class="row">
+        <div style="flex:1">
+          <label>Origin</label>
+          <input type="text" class="origin" placeholder="City, ST or full address" />
+        </div>
+        <div style="flex:1">
+          <label>Destination</label>
+          <input type="text" class="destination" placeholder="City, ST or full address" />
+        </div>
+      </div>
+      <div class="row">
+        <div style="flex:1">
+          <label>Rate ($/ton)</label>
+          <input type="number" class="rate" placeholder="e.g., 19" step="0.01" />
+        </div>
+        <div style="flex:1">
+          <label>Tons</label>
+          <input type="number" class="tons" placeholder="e.g., 26" step="0.1" />
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <script>
+    let map, bounds, dirService;
+    const polylines = [];
+
+    const $$ = (sel, ctx=document) => Array.from(ctx.querySelectorAll(sel));
+    const $ = (sel, ctx=document) => ctx.querySelector(sel);
+
+    const metersToMiles = m => m / 1609.344;
+    const fmtMi = n => (Math.round(n * 10) / 10).toLocaleString(undefined,{minimumFractionDigits:1, maximumFractionDigits:1});
+    const fmtMoney = n => n.toLocaleString(undefined,{style:'currency',currency:'USD'});
+
+    function initMap(){
+      map = new google.maps.Map(document.getElementById('map'), {
+        center:{lat:41.878, lng:-93.097}, zoom:6, mapId:'fde12c0d9b0a8c86'
+      });
+      bounds = new google.maps.LatLngBounds();
+      dirService = new google.maps.DirectionsService();
+
+      // Autocomplete for Base input
+      const baseInput = document.getElementById('base');
+      new google.maps.places.Autocomplete(baseInput, { fields:['geometry','name'], types:['geocode'] });
+
+      // Restore state
+      loadFromURL() || loadFromStorage();
+
+      $('#addLane').addEventListener('click', addLane);
+      $('#calc').addEventListener('click', calculateAndMap);
+      $('#sample').addEventListener('click', loadSample);
+      $('#clearAll').addEventListener('click', clearAll);
+      $('#exportCsv').addEventListener('click', exportCSV);
+      $('#emailBtn').addEventListener('click', generateEmail);
+    }
+
+    function addLane(data={}){
+      const wrap = document.getElementById('lanes');
+      const tmpl = document.getElementById('laneTmpl');
+      const node = tmpl.content.firstElementChild.cloneNode(true);
+      wrap.appendChild(node);
+      refreshLaneIndices();
+
+      // Attach autocomplete
+      const o = node.querySelector('.origin');
+      const d = node.querySelector('.destination');
+      new google.maps.places.Autocomplete(o,{fields:['geometry','name'], types:['geocode']});
+      new google.maps.places.Autocomplete(d,{fields:['geometry','name'], types:['geocode']});
+
+      // Prefill if provided
+      if(data.origin) o.value = data.origin;
+      if(data.destination) d.value = data.destination;
+      if(data.rate!=null) node.querySelector('.rate').value = data.rate;
+      if(data.tons!=null) node.querySelector('.tons').value = data.tons;
+
+      // Remove handler
+      node.querySelector('.del').addEventListener('click', ()=>{
+        node.remove();
+        refreshLaneIndices();
+        persist();
+      });
+
+      // Persist on change
+      $$('.origin,.destination,.rate,.tons', node).forEach(inp=>{
+        inp.addEventListener('change', persist);
+        inp.addEventListener('blur', persist);
+      });
+      persist();
+    }
+
+    function refreshLaneIndices(){
+      $$('#lanes .lane').forEach((lane, i)=>{
+        lane.querySelector('.laneIndex').textContent = i+1;
+      });
+    }
+
+    function clearMap(){
+      polylines.forEach(p=>p.setMap(null));
+      polylines.length = 0;
+      bounds = new google.maps.LatLngBounds();
+    }
+
+    async function routeMiles(origin, destination){
+      return new Promise((resolve, reject)=>{
+        dirService.route({
+          origin, destination, travelMode: google.maps.TravelMode.DRIVING, region:'US'
+        }, (res, status)=>{
+          if(status === 'OK'){
+            const leg = res.routes[0].legs[0];
+            // draw polyline using overview_path
+            const path = res.routes[0].overview_path;
+            resolve({ miles: metersToMiles(leg.distance.value), path });
+          } else {
+            reject(new Error(status+': '+origin+' → '+destination));
+          }
+        });
+      });
+    }
+
+    function drawPath(path, {color='#1a73e8', weight=4, dash=false}={}){
+      const polyline = new google.maps.Polyline({
+        map, path, strokeColor: color, strokeOpacity: 1, strokeWeight: weight,
+        icons: dash ? [{icon:{path:'M 0,-1 0,1', strokeOpacity:1, scale:2}, offset:'0', repeat:'22px'}] : undefined
+      });
+      polylines.push(polyline);
+      path.forEach(ll=>bounds.extend(ll));
+      map.fitBounds(bounds, {top:24,right:24,bottom:24,left:24});
+    }
+
+    async function calculateAndMap(){
+      clearMap();
+      const lanes = readLanes();
+      if(lanes.length===0){ alert('Add at least one lane'); return; }
+
+      const base = $('#base').value.trim();
+      const includeStartDH = $('#includeStartDH').checked && base;
+      const returnToBase = $('#returnToBase').checked && base;
+
+      let totals = { loaded:0, deadhead:0, gross:0 };
+      const perLane = [];
+
+      let prevDest = null; // for deadhead to next origin
+
+      // optional deadhead from base → first origin
+      if(includeStartDH){
+        try{
+          const {miles, path} = await routeMiles(base, lanes[0].origin);
+          totals.deadhead += miles;
+          drawPath(path, {color:'#808080', weight:4, dash:true});
+          prevDest = lanes[0].origin; // treat as last point for sequential logic
+        }catch(e){ console.warn(e); }
+      }
+
+      // Iterate lanes
+      for(let i=0;i<lanes.length;i++){
+        const L = lanes[i];
+        // deadhead from previous destination to this origin (if we already ran a lane)
+        if(i>0 || (!includeStartDH && i===0 && prevDest)){
+          const from = perLane.length ? perLane[perLane.length-1].destination : prevDest;
+          if(from){
+            try{
+              const {miles, path} = await routeMiles(from, L.origin);
+              totals.deadhead += miles;
+              drawPath(path, {color:'#808080', weight:4, dash:true});
+            }catch(e){ console.warn(e); }
+          }
+        }
+
+        // loaded miles for this lane
+        try{
+          const {miles, path} = await routeMiles(L.origin, L.destination);
+          totals.loaded += miles;
+          drawPath(path, {color:'#1a73e8', weight:5});
+          const gross = (Number(L.rate)||0) * (Number(L.tons)||0);
+          totals.gross += gross;
+          perLane.push({
+            index:i+1,
+            origin:L.origin,
+            destination:L.destination,
+            loaded:miles,
+            deadhead:0, // will compute above where applicable per lane row
+            rate:Number(L.rate)||0,
+            tons:Number(L.tons)||0,
+            gross
+          });
+        }catch(e){ alert('Route failed: '+e.message); console.error(e); return; }
+      }
+
+      // Compute per-lane deadhead miles (estimated as prev dest → this origin)
+      // Re-run just for numbers using the same logic as drawn above
+      perLane.forEach(pl=>pl.deadhead=0);
+      const dhPromises=[];
+      const dhPairs=[];
+      // start deadhead from base → first origin
+      if(includeStartDH){ dhPairs.push([base, perLane[0].origin, 0]); }
+      for(let i=1;i<perLane.length;i++){
+        dhPairs.push([perLane[i-1].destination, perLane[i].origin, i]);
+      }
+      for(const [a,b,idx] of dhPairs){
+        dhPromises.push(routeMiles(a,b).then(r=>({idx, miles:r.miles})).catch(()=>({idx, miles:0})));
+      }
+      const dhRes = await Promise.all(dhPromises);
+      dhRes.forEach(({idx,miles})=>{ if(idx>=0) perLane[idx].deadhead += miles; });
+      
+      // final deadhead back to base
+      if(returnToBase){
+        try{
+          const last = perLane[perLane.length-1];
+          const {miles, path} = await routeMiles(last.destination, base);
+          totals.deadhead += miles;
+          drawPath(path, {color:'#808080', weight:4, dash:true});
+        }catch(e){ console.warn(e); }
+      }
+
+      renderResults(perLane, totals);
+      persist();
+      updateShareURL();
+    }
+
+    function readLanes(){
+      const list = [];
+      $$('#lanes .lane').forEach(el=>{
+        const origin = el.querySelector('.origin').value.trim();
+        const destination = el.querySelector('.destination').value.trim();
+        const rate = parseFloat(el.querySelector('.rate').value);
+        const tons = parseFloat(el.querySelector('.tons').value);
+        if(origin && destination){ list.push({origin, destination, rate, tons}); }
+      });
+      return list;
+    }
+
+    function renderResults(perLane, totals){
+      const table = $('#resultsTable');
+      const tbody = table.querySelector('tbody');
+      tbody.innerHTML = '';
+
+      // totals (recompute deadhead from perLane rows + any start DH we added to lane 0)
+      let loaded = 0, deadhead = 0, gross = 0;
+      perLane.forEach(L=>{ loaded += L.loaded; deadhead += L.deadhead; gross += L.gross; });
+
+      perLane.forEach(L=>{
+        const tr = document.createElement('tr');
+        const laneRPM = L.gross / (L.loaded + L.deadhead || 1);
+        tr.innerHTML = `
+          <td>${L.index}</td>
+          <td style="text-align:left">${escapeHtml(L.origin)} → ${escapeHtml(L.destination)}</td>
+          <td>${fmtMi(L.loaded)}</td>
+          <td>${fmtMi(L.deadhead)}</td>
+          <td>${L.rate?Number(L.rate).toFixed(2):''}</td>
+          <td>${L.tons?Number(L.tons).toFixed(1):''}</td>
+          <td>${fmtMoney(L.gross||0)}</td>
+          <td>${laneRPM?laneRPM.toFixed(2):''}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      $('#tLoaded').textContent = fmtMi(loaded);
+      $('#tDeadhead').textContent = fmtMi(deadhead);
+      $('#tGross').textContent = fmtMoney(gross);
+      const totalMiles = loaded + deadhead;
+      const rpm = gross / (totalMiles || 1);
+      $('#tRPM').textContent = rpm.toFixed(2);
+
+      table.hidden = false;
+    }
+
+    function exportCSV(){
+      const perLane = collectPerLaneFromTable();
+      if(!perLane.length){ alert('No results yet. Click Calculate & Map first.'); return; }
+      const headers = ['Lane','Origin','Destination','Loaded_mi','Deadhead_mi','Rate_per_ton','Tons','Gross','Lane_RPM'];
+      const rows = perLane.map(L=>[
+        L.index,
+        '"'+L.origin.replaceAll('"','""')+'"',
+        '"'+L.destination.replaceAll('"','""')+'"',
+        fmtMi(L.loaded),
+        fmtMi(L.deadhead),
+        L.rate?.toFixed(2)||'',
+        L.tons?.toFixed(1)||'',
+        (L.gross||0).toFixed(2),
+        (L.gross / (L.loaded+L.deadhead||1)).toFixed(2)
+      ]);
+      const csv = [headers.join(','), ...rows.map(r=>r.join(','))].join('\n');
+      const blob = new Blob([csv],{type:'text/csv'});
+      const url = URL.createObjectURL(blob);
+      const a = Object.assign(document.createElement('a'), {href:url, download:'lanes_export.csv'});
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function generateEmail(){
+      const perLane = collectPerLaneFromTable();
+      if(!perLane.length){ alert('No results yet. Click Calculate & Map first.'); return; }
+      let loaded=0, deadhead=0, gross=0;
+      perLane.forEach(L=>{ loaded+=L.loaded; deadhead+=L.deadhead; gross+=L.gross; });
+      const total = loaded+deadhead;
+      const rpmAll = gross/(total||1);
+      const rpmLoaded = gross/(loaded||1);
+
+      const base = $('#base').value.trim();
+      const flags = [];
+      if($('#includeStartDH').checked && base) flags.push('Base→first origin DH included');
+      if($('#returnToBase').checked && base) flags.push('Final DH back to Base included');
+
+      const lines = [];
+      lines.push('Proposed Lanes Summary');
+      if(base) lines.push('Base/Yard: '+base);
+      if(flags.length) lines.push('Notes: '+flags.join('; '));
+      lines.push('');
+      perLane.forEach(L=>{
+        const rpmLane = L.gross / (L.loaded+L.deadhead||1);
+        lines.push(`Lane ${L.index}: ${L.origin} → ${L.destination}`);
+        lines.push(`  Loaded: ${fmtMi(L.loaded)} mi | Deadhead: ${fmtMi(L.deadhead)} mi`);
+        lines.push(`  Rate: $${(L.rate||0).toFixed(2)}/ton × ${(L.tons||0).toFixed(1)} tons = ${fmtMoney(L.gross||0)}`);
+        lines.push(`  Lane RPM: $${rpmLane.toFixed(2)}`);
+        lines.push('');
+      });
+      lines.push(`TOTAL Loaded: ${fmtMi(loaded)} mi`);
+      lines.push(`TOTAL Deadhead: ${fmtMi(deadhead)} mi`);
+      lines.push(`TOTAL Miles: ${fmtMi(total)} mi`);
+      lines.push(`TOTAL Gross: ${fmtMoney(gross)}`);
+      lines.push(`Overall RPM (all miles): $${rpmAll.toFixed(2)}`);
+      lines.push(`Loaded‑only RPM: $${rpmLoaded.toFixed(2)}`);
+      lines.push('');
+      lines.push('Open in calculator: '+location.href);
+
+      const body = encodeURIComponent(lines.join('\n'));
+      const subj = encodeURIComponent('Lane Proposal – Map & RPM');
+      const mailto = `mailto:?subject=${subj}&body=${body}`;
+      window.open(mailto, '_blank');
+    }
+
+    function collectPerLaneFromTable(){
+      const rows = Array.from($('#resultsTable tbody').rows);
+      if(!rows.length) return [];
+      return rows.map(tr=>{
+        const tds = tr.cells;
+        const [index, pair, loaded, deadhead, rate, tons, gross] = [
+          Number(tds[0].textContent),
+          tds[1].textContent,
+          Number(tds[2].textContent.replace(/,/g,'')),
+          Number(tds[3].textContent.replace(/,/g,'')),
+          Number(tds[4].textContent),
+          Number(tds[5].textContent),
+          Number(tds[6].textContent.replace(/[$,]/g,''))
+        ];
+        const [origin, destination] = pair.split(' → ').map(s=>s.trim());
+        return {index, origin, destination, loaded, deadhead, rate, tons, gross};
+      });
+    }
+
+    function escapeHtml(str){
+      return str.replace(/[&<>\"]/g, s=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[s]));
+    }
+
+    function persist(){
+      const data = {
+        base: $('#base').value.trim(),
+        includeStartDH: $('#includeStartDH').checked,
+        returnToBase: $('#returnToBase').checked,
+        lanes: readLanes()
+      };
+      localStorage.setItem('farmpro_lanes', JSON.stringify(data));
+    }
+
+    function loadFromStorage(){
+      try{
+        const raw = localStorage.getItem('farmpro_lanes');
+        if(!raw) { addLane(); return true; }
+        const data = JSON.parse(raw);
+        $('#base').value = data.base||'';
+        $('#includeStartDH').checked = !!data.includeStartDH;
+        $('#returnToBase').checked = !!data.returnToBase;
+        $('#lanes').innerHTML='';
+        (data.lanes||[]).forEach(addLane);
+        if(!(data.lanes||[]).length) addLane();
+        return true;
+      }catch(e){ addLane(); return true; }
+    }
+
+    function updateShareURL(){
+      const payload = {
+        base: $('#base').value.trim(),
+        i: $('#includeStartDH').checked?1:0,
+        r: $('#returnToBase').checked?1:0,
+        lanes: readLanes()
+      };
+      const qp = new URLSearchParams({state: btoa(unescape(encodeURIComponent(JSON.stringify(payload))))});
+      const url = location.origin + location.pathname + '?' + qp.toString();
+      history.replaceState(null,'',url);
+    }
+
+    function loadFromURL(){
+      const s = new URLSearchParams(location.search).get('state');
+      if(!s) return false;
+      try{
+        const data = JSON.parse(decodeURIComponent(escape(atob(s))));
+        $('#base').value = data.base||'';
+        $('#includeStartDH').checked = !!data.i;
+        $('#returnToBase').checked = !!data.r;
+        $('#lanes').innerHTML='';
+        (data.lanes||[]).forEach(addLane);
+        if(!(data.lanes||[]).length) addLane();
+        return true;
+      }catch(e){ return false; }
+    }
+
+    function loadSample(){
+      $('#lanes').innerHTML='';
+      addLane({origin:'Mankato, MN', destination:'Lake Mills, WI', rate:38, tons:26});
+      addLane({origin:'Cambria, WI', destination:'Milwaukee, WI', rate:14, tons:26});
+      addLane({origin:'Racine, WI', destination:'East Dubuque, IL', rate:19, tons:26});
+      addLane({origin:'East Dubuque, IL', destination:'Stanhope, IA', rate:24, tons:26});
+      $('#base').value = 'Fairbank, IA';
+      $('#includeStartDH').checked = true;
+      $('#returnToBase').checked = false;
+      persist();
+    }
+
+    function clearAll(){
+      if(!confirm('Clear all lanes and settings?')) return;
+      localStorage.removeItem('farmpro_lanes');
+      $('#lanes').innerHTML='';
+      $('#base').value='';
+      $('#includeStartDH').checked = true;
+      $('#returnToBase').checked = false;
+      addLane();
+      history.replaceState(null,'',location.pathname);
+      clearMap();
+      $('#resultsTable').hidden = true;
+    }
+  </script>
+  <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAX9GFUEGbzuUx3KefbZw9_a0_eDOiNFf0&libraries=places&callback=initMap"></script>
+</body>
+</html>
