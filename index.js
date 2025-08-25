@@ -33,6 +33,11 @@ function parseList(envVal) {
 const ADMIN_WHITELIST = parseList(process.env.ADMIN_WHITELIST);
 const PROBE_WHITELIST = parseList(process.env.PROBE_WHITELIST); // falls back to admin if empty later
 
+const extraAllowed = ['+15636083369', '+15639205636'];
+for (const num of extraAllowed) {
+  ADMIN_WHITELIST.add(num);
+  PROBE_WHITELIST.add(num)
+
 // ------------------------- DB (idempotent schema) ----------------------------
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
