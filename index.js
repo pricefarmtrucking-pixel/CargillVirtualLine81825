@@ -1032,23 +1032,46 @@ app.post('/api/slots/mass-notify', async (req, res) => {
 });
 
 // ------------------------- Driver Manage (secure) ----------------------------
-// Lookup by phone + probe code
+// Lookup by phone (+1XXXXXXXXXX) OR last 4 + probe code
 app.post('/api/driver/manage/lookup', (req, res) => {
   try {
-    const phone = normPhone(req.body?.phone);
+    const rawPhone = String(req.body?.phone || '').trim();
     const probe = String(req.body?.probe_code || '').trim();
-    if (!phone || !/^\d{4}$/.test(probe)) {
-      return res.status(400).json({ error: 'valid phone and 4-digit probe_code required' });
+    if (!/^\d{4}$/.test(probe)) {
+      return res.status(400).json({ error: 'valid 4-digit probe_code required' });
     }
-    // Latest reservation with this phone + code
-    const row = db.prepare(`
-      SELECT id, site_id, date, slot_time, driver_name, license_plate, vendor_name,
-             farm_or_ticket, est_amount, est_unit, driver_phone, queue_code, status
-      FROM slot_reservations
-      WHERE driver_phone = ? AND queue_code = ?
-      ORDER BY datetime(created_at) DESC
-      LIMIT 1
-    `).get(phone, probe);
+
+    const full = (()=>{
+      const d = rawPhone.replace(/\D/g,'');
+      if (/^\d{10}$/.test(d)) return '+1'+d;
+      if (/^1\d{10}$/.test(d)) return '+'+d;
+      if (/^\+1\d{10}$/.test(rawPhone)) return rawPhone;
+      return null;
+    })();
+    const last4 = rawPhone.replace(/\D/g,'').slice(-4);
+
+    let row = null;
+    if (full) {
+      row = db.prepare(`
+        SELECT id, site_id, date, slot_time, driver_name, license_plate, vendor_name,
+               farm_or_ticket, est_amount, est_unit, driver_phone, queue_code, status
+          FROM slot_reservations
+         WHERE driver_phone = ? AND queue_code = ?
+         ORDER BY datetime(created_at) DESC
+         LIMIT 1
+      `).get(full, probe);
+    }
+    if (!row && /^\d{4}$/.test(last4)) {
+      row = db.prepare(`
+        SELECT id, site_id, date, slot_time, driver_name, license_plate, vendor_name,
+               farm_or_ticket, est_amount, est_unit, driver_phone, queue_code, status
+          FROM slot_reservations
+         WHERE substr(driver_phone, length(driver_phone)-3, 4) = ?
+           AND queue_code = ?
+         ORDER BY datetime(created_at) DESC
+         LIMIT 1
+      `).get(last4, probe);
+    }
 
     if (!row) return res.status(404).json({ error: 'no reservation found for that phone + code' });
     return res.json({ ok:true, reservation: row });
