@@ -1032,52 +1032,55 @@ app.post('/api/slots/mass-notify', async (req, res) => {
 });
 
 // ------------------------- Driver Manage (secure) ----------------------------
-// Lookup by phone (+1XXXXXXXXXX) OR last 4 + probe code
+// Lookup by phone (full or last 4) + probe code
 app.post('/api/driver/manage/lookup', (req, res) => {
   try {
-    const rawPhone = String(req.body?.phone || '').trim();
     const probe = String(req.body?.probe_code || '').trim();
+    const phoneRaw = String(req.body?.phone || '').trim();
+
     if (!/^\d{4}$/.test(probe)) {
       return res.status(400).json({ error: 'valid 4-digit probe_code required' });
     }
 
-    const full = (()=>{
-      const d = rawPhone.replace(/\D/g,'');
-      if (/^\d{10}$/.test(d)) return '+1'+d;
-      if (/^1\d{10}$/.test(d)) return '+'+d;
-      if (/^\+1\d{10}$/.test(rawPhone)) return rawPhone;
-      return null;
-    })();
-    const last4 = rawPhone.replace(/\D/g,'').slice(-4);
+    // Helpful trace – shows exactly what the server received
+    console.log('[lookup] raw phone:', phoneRaw, 'probe:', probe);
 
-    let row = null;
-    if (full) {
+    let row;
+
+    // If user typed exactly 4 digits, treat as "last 4" search
+    if (/^\d{4}$/.test(phoneRaw)) {
       row = db.prepare(`
         SELECT id, site_id, date, slot_time, driver_name, license_plate, vendor_name,
                farm_or_ticket, est_amount, est_unit, driver_phone, queue_code, status
-          FROM slot_reservations
-         WHERE driver_phone = ? AND queue_code = ?
-         ORDER BY datetime(created_at) DESC
-         LIMIT 1
-      `).get(full, probe);
-    }
-    if (!row && /^\d{4}$/.test(last4)) {
+        FROM slot_reservations
+        WHERE substr(driver_phone, -4) = ?
+          AND queue_code = ?
+        ORDER BY datetime(created_at) DESC
+        LIMIT 1
+      `).get(phoneRaw, probe);
+    } else {
+      // Try full normalization (+1XXXXXXXXXX)
+      const phoneFull = normPhone(phoneRaw);
+      if (!phoneFull) {
+        return res.status(400).json({ error: 'enter 10-digit phone or last 4' });
+      }
       row = db.prepare(`
         SELECT id, site_id, date, slot_time, driver_name, license_plate, vendor_name,
                farm_or_ticket, est_amount, est_unit, driver_phone, queue_code, status
-          FROM slot_reservations
-         WHERE substr(driver_phone, length(driver_phone)-3, 4) = ?
-           AND queue_code = ?
-         ORDER BY datetime(created_at) DESC
-         LIMIT 1
-      `).get(last4, probe);
+        FROM slot_reservations
+        WHERE driver_phone = ?
+          AND queue_code = ?
+        ORDER BY datetime(created_at) DESC
+        LIMIT 1
+      `).get(phoneFull, probe);
     }
 
     if (!row) return res.status(404).json({ error: 'no reservation found for that phone + code' });
-    return res.json({ ok:true, reservation: row });
+
+    return res.json({ ok: true, reservation: row });
   } catch (e) {
     console.error('/api/driver/manage/lookup', e);
-    res.status(500).json({ error:'server error' });
+    res.status(500).json({ error: 'server error' });
   }
 });
 
