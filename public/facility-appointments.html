@@ -120,6 +120,7 @@
         <th>Probe Code</th>
         <th>Driver</th>
         <th>Plate</th>
+        <th>Trucking Company</th><!-- NEW -->
         <th>Vendor</th>
         <th>Ticket/Farm</th>
         <th>Est Qty</th>
@@ -128,7 +129,7 @@
       </tr>
     </thead>
     <tbody id="tbody">
-      <tr><td colspan="11"><div class="spinner"></div></td></tr>
+      <tr><td colspan="12"><div class="spinner"></div></td></tr><!-- colspan bumped -->
     </tbody>
   </table>
 </div>
@@ -151,6 +152,10 @@
       <div>
         <label>Plate</label>
         <input id="f_plate" placeholder="ABC123">
+      </div>
+      <div>
+        <label>Trucking Company</label><!-- NEW -->
+        <input id="f_trucking" placeholder="Company / Carrier">
       </div>
       <div>
         <label>Vendor</label>
@@ -213,19 +218,20 @@ const addInterval = $('#addInterval');
 const addKind     = $('#addKind');
 const addTimesBtn = $('#addTimesBtn');
 
-const editBack  = $('#editBack');
-const editTitle = $('#editTitle');
-const editWhen  = $('#editWhen');
-const f_driver  = $('#f_driver');
-const f_phone   = $('#f_phone');
-const f_plate   = $('#f_plate');
-const f_vendor  = $('#f_vendor');
-const f_ticket  = $('#f_ticket');
-const f_amt     = $('#f_amt');
-const f_unit    = $('#f_unit');
-const f_probe   = $('#f_probe');
-const btnSave   = $('#editSave');
-const btnClose  = $('#editCancel');
+const editBack    = $('#editBack');
+const editTitle   = $('#editTitle');
+const editWhen    = $('#editWhen');
+const f_driver    = $('#f_driver');
+const f_phone     = $('#f_phone');
+const f_plate     = $('#f_plate');
+const f_trucking  = $('#f_trucking');   // NEW
+const f_vendor    = $('#f_vendor');
+const f_ticket    = $('#f_ticket');
+const f_amt       = $('#f_amt');
+const f_unit      = $('#f_unit');
+const f_probe     = $('#f_probe');
+const btnSave     = $('#editSave');
+const btnClose    = $('#editCancel');
 
 function todayISO(){ const d=new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10); }
 dateSel.value = todayISO();
@@ -234,7 +240,7 @@ let rows = []; // {slot_time, is_workin, disabled, reservation_id, ...}
 
 // ------------ fetch + render -------------
 async function load() {
-  tbody.innerHTML = `<tr><td colspan="11"><div class="spinner"></div></td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="12"><div class="spinner"></div></td></tr>`;
   const site_id = Number(siteSel.value);
   const date = dateSel.value;
   const qs = new URLSearchParams({site_id, date}).toString();
@@ -259,7 +265,7 @@ function render() {
   });
 
   if (!filt.length) {
-    tbody.innerHTML = `<tr><td colspan="11" class="muted">No rows</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="12" class="muted">No rows</td></tr>`;
     return;
   }
 
@@ -279,6 +285,7 @@ function render() {
         <td>${probe}</td>
         <td>${r.driver_name || '—'}</td>
         <td>${r.license_plate || '—'}</td>
+        <td>${r.trucking_company || '—'}</td><!-- NEW -->
         <td>${r.vendor_name || '—'}</td>
         <td>${r.farm_or_ticket || '—'}</td>
         <td>${est}</td>
@@ -405,14 +412,15 @@ function openModal(data) {
   editWhen.textContent = `Site ${data.site_id===1?'EAST':'WEST'} • ${data.date} • ${data.slot_time}`;
 
   const r = rows.find(x=>x.slot_time===data.slot_time && (!!x.reservation_id)===!!data.reservation_id);
-  f_driver.value = r?.driver_name || '';
-  f_phone.value  = r?.driver_phone || '';
-  f_plate.value  = r?.license_plate || '';
-  f_vendor.value = r?.vendor_name || '';
-  f_ticket.value = r?.farm_or_ticket || '';
-  f_amt.value    = r?.est_amount ?? '';
-  f_unit.value   = r?.est_unit || 'BUSHELS';
-  f_probe.value  = r?.queue_code || '';
+  f_driver.value    = r?.driver_name || '';
+  f_phone.value     = r?.driver_phone || '';
+  f_plate.value     = r?.license_plate || '';
+  f_trucking.value  = r?.trucking_company || ''; // NEW
+  f_vendor.value    = r?.vendor_name || '';
+  f_ticket.value    = r?.farm_or_ticket || '';
+  f_amt.value       = r?.est_amount ?? '';
+  f_unit.value      = r?.est_unit || 'BUSHELS';
+  f_probe.value     = r?.queue_code || '';
 }
 function closeModal(){ editBack.style.display='none'; editing=null; }
 
@@ -421,6 +429,7 @@ async function saveModal() {
     driver_name : f_driver.value.trim() || null,
     driver_phone: f_phone.value.trim()  || null,
     license_plate: f_plate.value.trim() || null,
+    trucking_company: f_trucking.value.trim() || null, // NEW
     vendor_name:  f_vendor.value.trim() || null,
     farm_or_ticket: f_ticket.value.trim() || null,
     est_amount: f_amt.value ? Number(f_amt.value) : null,
