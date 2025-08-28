@@ -115,6 +115,9 @@ if (!tableHasColumn('time_slots','reserved_at')) {
 if (!tableHasColumn('time_slots','disabled')) {
   db.exec(`ALTER TABLE time_slots ADD COLUMN disabled INTEGER DEFAULT 0;`);
 }
+if (!tableHasColumn('slot_reservations','trucking_company')) {
+  db.exec(`ALTER TABLE slot_reservations ADD COLUMN trucking_company TEXT;`);
+}
 
 // ------------------------- Twilio (optional) ---------------------------------
 let twilio = null;
