@@ -1,206 +1,137 @@
 <!doctype html>
-<html lang="en">
+<html>
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Select Time — Cargill Soybean</title>
+  <title>Choose a Time — Cargill Soybean</title>
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#222; }
-    .wrap { max-width: 720px; margin: 4vh auto; padding: 0 16px; }
-    .card { border:1px solid #ddd; border-radius:12px; padding:1rem; background:#fff; box-shadow:0 2px 12px rgba(0,0,0,.04); }
-    h1 { font-size:1.25rem; margin:.25rem 0 .75rem; }
-    label { display:block; font-size:.9rem; margin:.6rem 0 .35rem; color:#444; }
-    input, select, button, textarea { width:100%; padding:.65rem .8rem; border:1px solid #ccc; border-radius:10px; font-size:1rem; }
-    .row { display:flex; gap:.6rem; flex-wrap:wrap; align-items:center; }
-    .row > * { flex:1 1 220px; }
-    .btn { padding:.7rem 1rem; border:1px solid #ccc; border-radius:10px; background:#f7f7f7; cursor:pointer; }
-    .btn.primary { background:#1e90ff; border-color:#1e90ff; color:#fff; }
-    .btn:disabled { opacity:.6; cursor:not-allowed; }
-    .muted { color:#666; font-size:.9rem; }
-    .error { color:#b00020; margin-top:.35rem; }
-    .ok { color:#0a7d26; margin-top:.35rem; }
-    .slots { display:flex; flex-wrap:wrap; gap:.5rem; margin:.5rem 0 1rem; }
-    .chip { padding:.5rem .7rem; border:1px solid #ddd; border-radius:999px; cursor:pointer; user-select:none; }
-    .chip.active { background:#1e90ff; border-color:#1e90ff; color:#fff; }
+    .wrap { max-width: 900px; margin: 4vh auto; padding: 0 16px; }
+    .hdr { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
+    select, input[type=date], button { padding:.45rem .6rem; border:1px solid #ccc; border-radius:10px; }
+    .grid { margin-top:1rem; display:grid; grid-template-columns: repeat(4, 1fr); gap:.6rem; }
+    .slot { padding:.75rem; border:1px solid #e5e5e5; border-radius:12px; text-align:center; background:#fff; cursor:pointer; }
+    .slot:hover { outline: 2px solid #1e90ff22; }
+    .note { color:#666; margin-top:.5rem; }
+    .meta { margin:.25rem 0 0; font-size:.9rem; color:#555; }
   </style>
+
+  <script>
+    // --- Require driver session ------------------------------------------------
+    function readCookie(name) {
+      return document.cookie.split(';')
+        .map(v => v.trim())
+        .find(v => v.startsWith(name + '='))?.split('=')[1] || null;
+    }
+
+    (function guard() {
+      const phone = readCookie('session_phone');
+      const role  = readCookie('session_role');
+      if (!phone || role !== 'driver') {
+        // Not logged in as driver: send to driver login
+        window.location.replace('driver-login.html');
+      }
+    })();
+  </script>
 </head>
 <body>
 <div class="wrap">
-  <div class="card">
-    <h1>Select a Time</h1>
+  <h2>Choose a Time</h2>
+  <div class="meta" id="who"></div>
 
-    <div class="row">
-      <label>
-        Facility
-        <select id="site">
-          <option value="1">EAST</option>
-          <option value="2">WEST</option>
-        </select>
-      </label>
-      <label>
-        Date
-        <input id="date" type="date"/>
-      </label>
-    </div>
-
-    <div id="slots" class="slots"></div>
-    <div id="msg" class="muted"></div>
-
-    <h2 style="margin-top:1rem;font-size:1.1rem;">Driver Details</h2>
-    <div class="row">
-      <label>
-        Driver Name
-        <input id="driver_name" placeholder="Jane Doe"/>
-      </label>
-      <label>
-        License Plate
-        <input id="license_plate" placeholder="ABC 1234"/>
-      </label>
-      <label>
-        Trucking Company
-        <input id="trucking_company" placeholder="e.g., Acme Transport LLC"/>
-      </label>
-    </div>
-
-    <div class="row">
-      <label>
-        Vendor
-        <input id="vendor_name" placeholder="Farm/Vendor"/>
-      </label>
-      <label>
-        Farm or Ticket #
-        <input id="farm_or_ticket" placeholder="Optional"/>
-      </label>
-    </div>
-
-    <div class="row">
-      <label>
-        Estimated Amount
-        <input id="est_amount" type="number" step="0.01" placeholder="e.g., 900"/>
-      </label>
-      <label>
-        Units
-        <select id="est_unit">
-          <option>BUSHELS</option>
-          <option>TONS</option>
-          <option>POUNDS</option>
-        </select>
-      </label>
-      <label>
-        Driver Phone
-        <input id="driver_phone" type="tel" inputmode="tel" placeholder="(555) 555-5555"/>
-      </label>
-    </div>
-
-    <div class="row" style="margin-top:.75rem;">
-      <button id="confirm" class="btn primary" disabled>Confirm Reservation</button>
-      <a class="btn" href="index.html">Cancel</a>
-    </div>
-    <div id="m2" class="muted"></div>
+  <div class="hdr">
+    <label>Site
+      <select id="site">
+        <option value="1">EAST (1)</option>
+        <option value="2">WEST (2)</option>
+      </select>
+    </label>
+    <label>Date <input id="date" type="date"/></label>
+    <button id="refresh">Refresh</button>
   </div>
-  <p class="muted" style="margin-top:.75rem;">You’ll receive a text with your 4-digit probe code after confirmation.</p>
+
+  <div id="grid" class="grid"></div>
+  <div id="msg" class="note"></div>
 </div>
 
 <script>
-const $ = (id)=>document.getElementById(id);
-const normPhone = (p)=>{
-  const d = String(p||'').replace(/\D/g,'');
-  if (/^\d{10}$/.test(d)) return '+1'+d;
-  if (/^1\d{10}$/.test(d)) return '+'+d;
-  if (/^\+1\d{10}$/.test(d)) return d;
-  return null;
-};
+const $ = id => document.getElementById(id);
+const api = p => p;
 
-let selected = null;
-
-function chip(el, t) {
-  el.className = 'chip';
-  el.textContent = t;
-  el.onclick = ()=>{
-    [...document.querySelectorAll('.chip')].forEach(c=>c.classList.remove('active'));
-    el.classList.add('active');
-    selected = t;
-    $('confirm').disabled = false;
-  };
-  return el;
-}
-
-async function loadSlots() {
-  $('msg').textContent = 'Loading…';
-  $('slots').innerHTML = '';
-  $('confirm').disabled = true;
-  selected = null;
-  const site = +$('site').value;
-  const date = $('date').value;
-  if (!date) { $('msg').textContent = 'Pick a date.'; return; }
-  const r = await fetch(`/api/sites/${site}/slots?date=${encodeURIComponent(date)}`);
-  const data = await r.json();
-  if (!Array.isArray(data) || !data.length) {
-    $('msg').textContent = 'No open times.';
-    return;
+// show who (last 4 of phone) if available
+(function showDriver() {
+  const cookies = Object.fromEntries(document.cookie.split(';').map(s => s.trim().split('=')));
+  const phone = cookies['session_phone'] || '';
+  if (phone) {
+    const last4 = phone.slice(-4);
+    $('who').textContent = `Signed in as driver • ${last4 ? '•••' + last4 : ''}`;
   }
-  data.forEach(t=>{
-    $('slots').appendChild(chip(document.createElement('div'), t));
-  });
-  $('msg').textContent = 'Tap a time, then confirm.';
-}
-
-async function confirmReservation() {
-  $('m2').className = 'muted';
-  $('m2').textContent = 'Holding slot…';
-  const site_id = +$('site').value;
-  const date = $('date').value;
-  if (!selected) { $('m2').textContent = 'Pick a time first.'; return; }
-
-  // Hold
-  const hold = await fetch('/api/slots/hold', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ site_id, date, slot_time: selected })
-  }).then(r=>r.json());
-
-  if (!hold.hold_token) {
-    $('m2').className = 'error';
-    $('m2').textContent = hold.error || 'Failed to hold slot.';
-    return;
-  }
-
-  // Gather form fields (includes new trucking_company)
-  const payload = {
-    hold_token: hold.hold_token,
-    driver_name: $('driver_name').value || null,
-    license_plate: $('license_plate').value || null,
-    trucking_company: $('trucking_company').value || null,
-    vendor_name: $('vendor_name').value || null,
-    farm_or_ticket: $('farm_or_ticket').value || null,
-    est_amount: $('est_amount').value ? Number($('est_amount').value) : null,
-    est_unit: $('est_unit').value || 'BUSHELS',
-    driver_phone: normPhone($('driver_phone').value) || null
-  };
-
-  $('m2').textContent = 'Confirming…';
-  const resp = await fetch('/api/slots/confirm', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(payload)
-  }).then(r=>r.json());
-
-  if (!resp.ok && resp.error) {
-    $('m2').className = 'error';
-    $('m2').textContent = resp.error;
-    return;
-  }
-  $('m2').className = 'ok';
-  $('m2').textContent = `Confirmed! Your probe code is ${resp.queue_code}.`;
-  setTimeout(()=>location.href='driver-manage.html', 900);
-}
-
-(function init(){
-  const today = new Date().toISOString().slice(0,10);
-  $('date').value = today;
-  $('site').onchange = loadSlots;
-  $('date').onchange = loadSlots;
-  $('confirm').onclick = confirmReservation;
-  loadSlots();
 })();
+
+async function load(){
+  const site = +$('site').value;
+  const date = $('date').value || new Date().toISOString().slice(0,10);
+  $('grid').innerHTML='Loading…';
+  try {
+    const r = await fetch(api(`/api/sites/${site}/slots?date=${encodeURIComponent(date)}`));
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const slots = await r.json().catch(()=>[]);
+    $('grid').innerHTML='';
+    if(!Array.isArray(slots) || slots.length===0){
+      $('grid').textContent='No open times.';
+      $('msg').textContent = '0 open times';
+      return;
+    }
+    for(const t of slots){
+      const div=document.createElement('div');
+      div.className='slot';
+      div.textContent=t;
+      div.onclick=()=>reserve(site, date, t);
+      $('grid').appendChild(div);
+    }
+    $('msg').textContent = `${slots.length} open times`;
+  } catch (e) {
+    $('grid').textContent = 'Failed to load times.';
+    $('msg').textContent = e.message || 'Error';
+  }
+}
+
+async function reserve(site_id, date, slot_time){
+  // Simple 2-step: hold then confirm (demo; collect more fields as needed)
+  try{
+    const h = await fetch(api('/api/slots/hold'),{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ site_id, date, slot_time })
+    }).then(r=>r.json());
+    if(!h.hold_token) throw new Error(h.error||'hold failed');
+
+    const body = {
+      hold_token: h.hold_token, site_id, date, slot_time,
+      driver_name: prompt('Driver name?') || '',
+      license_plate: prompt('Plate?') || '',
+      trucking_company: prompt('Trucking Company?') || '',
+      vendor_name: prompt('Vendor?') || '',
+      farm_or_ticket: prompt('Farm/Ticket?') || '',
+      est_amount: Number(prompt('Estimated amount?')||'') || null,
+      est_unit: 'BUSHELS',
+      driver_phone: prompt('Mobile for confirmation (10 digits)?') || ''
+    };
+    const c = await fetch(api('/api/slots/confirm'),{
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    }).then(r=>r.json());
+
+    if(!c.ok) throw new Error(c.error||'confirm failed');
+    alert(`Reserved! Probe code: ${c.queue_code}`);
+    load();
+  }catch(e){ alert('Error: '+e.message); }
+}
+
+// init
+$('date').value = new Date().toISOString().slice(0,10);
+$('refresh').onclick = load;
+$('site').onchange = load;
+$('date').onchange = load;
+load();
 </script>
 </body>
 </html>
