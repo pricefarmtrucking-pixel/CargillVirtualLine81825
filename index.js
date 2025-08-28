@@ -83,6 +83,13 @@ CREATE TABLE IF NOT EXISTS slot_reservations (
   status TEXT DEFAULT 'reserved',
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS otp_allowlist (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  phone TEXT NOT NULL,           -- +1XXXXXXXXXX
+  role  TEXT NOT NULL,           -- 'admin' or 'probe'
+  added_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(phone, role)
+);
 CREATE INDEX IF NOT EXISTS idx_resv_probe ON slot_reservations (site_id, date, queue_code);
 CREATE TABLE IF NOT EXISTS otp_codes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,6 +157,54 @@ app.use(cors({
 }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// LIST allowlist (admin-only)
+app.get('/api/admin/allowlist', requireAdmin, (req, res) => {
+  const role = (String(req.query.role || 'admin').toLowerCase() === 'probe') ? 'probe' : 'admin';
+  const envSet = role === 'probe' ? (PROBE_WHITELIST.size ? PROBE_WHITELIST : PROBE_WHITELIST) : ADMIN_WHITELIST;
+
+  const env = Array.from(role === 'probe'
+    ? (PROBE_WHITELIST.size ? PROBE_WHITELIST : new Set()) // only show probe env if set
+    : ADMIN_WHITELIST);
+
+  const rows = db.prepare(
+    `SELECT phone, added_at FROM otp_allowlist WHERE role=? ORDER BY added_at DESC`
+  ).all(role);
+
+  res.json({ ok:true, role, env, db: rows });
+});
+
+// ADD to allowlist (admin-only)
+app.post('/api/admin/allowlist', requireAdmin, (req, res) => {
+  const role  = (String(req.body?.role || 'admin').toLowerCase() === 'probe') ? 'probe' : 'admin';
+  const phone = normPhone(req.body?.phone);
+  if (!phone) return res.status(400).json({ error: 'invalid phone' });
+  try {
+    db.prepare(
+      `INSERT OR IGNORE INTO otp_allowlist (phone, role) VALUES (?, ?)`
+    ).run(phone, role);
+    return res.json({ ok:true });
+  } catch (e) {
+    console.error('/api/admin/allowlist POST', e);
+    return res.status(500).json({ error:'server error' });
+  }
+});
+
+// REMOVE from allowlist (admin-only)
+app.delete('/api/admin/allowlist', requireAdmin, (req, res) => {
+  const role  = (String(req.body?.role || 'admin').toLowerCase() === 'probe') ? 'probe' : 'admin';
+  const phone = normPhone(req.body?.phone);
+  if (!phone) return res.status(400).json({ error: 'invalid phone' });
+  try {
+    const info = db.prepare(
+      `DELETE FROM otp_allowlist WHERE phone=? AND role=?`
+    ).run(phone, role);
+    return res.json({ ok:true, removed: info.changes });
+  } catch (e) {
+    console.error('/api/admin/allowlist DELETE', e);
+    return res.status(500).json({ error:'server error' });
+  }
+});
+
 // ------------------------- SSE bus -------------------------------------------
 const bus = new EventEmitter();
 bus.setMaxListeners(0);
@@ -199,13 +254,33 @@ function expireHolds() {
     WHERE hold_expires_at IS NOT NULL AND hold_expires_at < CURRENT_TIMESTAMP
   `).run();
 }
+function requireAdmin(req, res, next) {
+  const phone = String(req.cookies?.session_phone || '');
+  const role  = String(req.cookies?.session_role  || '');
+  if (role !== 'admin') return res.status(403).json({ error: 'admin required' });
+
+  // accept if in ENV whitelist or DB allowlist
+  if (ADMIN_WHITELIST.has(phone)) return next();
+  const inDb = db.prepare(`SELECT 1 FROM otp_allowlist WHERE phone=? AND role='admin'`).get(phone);
+  if (inDb) return next();
+
+  return res.status(403).json({ error: 'admin not allowlisted' });
+}
 
 // ------------------------- OTP Auth (with whitelists) ------------------------
 function isWhitelisted(role, phone) {
-  if (role === 'admin') return ADMIN_WHITELIST.has(phone);
+  if (role === 'admin') {
+    if (ADMIN_WHITELIST.has(phone)) return true;
+    const row = db.prepare(`SELECT 1 FROM otp_allowlist WHERE phone=? AND role='admin'`).get(phone);
+    return !!row;
+  }
   if (role === 'probe') {
-    if (PROBE_WHITELIST.size > 0) return PROBE_WHITELIST.has(phone);
-    return ADMIN_WHITELIST.has(phone);
+    // Probe: use PROBE list if present, otherwise fall back to admin list
+    const envOk = (PROBE_WHITELIST.size ? PROBE_WHITELIST : ADMIN_WHITELIST).has(phone);
+    if (envOk) return true;
+    const row = db.prepare(`SELECT 1 FROM otp_allowlist WHERE phone=? AND role='probe'`).get(phone)
+            || db.prepare(`SELECT 1 FROM otp_allowlist WHERE phone=? AND role='admin'`).get(phone);
+    return !!row;
   }
   return true; // drivers are open
 }
