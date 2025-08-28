@@ -612,8 +612,7 @@ app.post('/api/slots/confirm', async (req, res) => {
 
   const {
   driver_name, license_plate, trucking_company, vendor_name,
-  farm_or_ticket, est_amount, est_unit, driver_phone,
-  trucking_company     
+  farm_or_ticket, est_amount, est_unit, driver_phone, 
 } = req.body || {};
 
   const probe = fourDigit();
@@ -622,7 +621,7 @@ app.post('/api/slots/confirm', async (req, res) => {
     INSERT INTO slot_reservations
       (site_id,date,slot_time,driver_name,license_plate,trucking_company,vendor_name,
        farm_or_ticket,est_amount,est_unit,driver_phone, queue_code, status)
-VALUES (?,?,?,?,?,?,?,?,?,?,?, 'reserved', ?)
+VALUES (?,?,?,?,?,?,?,?,?,?,?, 'reserved')
     RETURNING id
   `).get(
     slot.site_id, slot.date, slot.slot_time,
@@ -845,17 +844,25 @@ app.post('/api/admin/reserve', async (req, res) => {
 
     const probe = queue_code || String(Math.floor(1000 + Math.random()*9000));
 
-    const info = db.prepare(`
-      INSERT INTO slot_reservations
-        (site_id,date,slot_time,driver_name,license_plate,trucking_company, vendor_name,
-         farm_or_ticket,est_amount,est_unit,driver_phone,queue_code,status)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?, 'reserved')
-      RETURNING id
-    `).get(site_id, date, slot_time,
-           driver_name||null, license_plate||null, trucking_company || null, vendor_name||null,
-           farm_or_ticket||null, est_amount||null, (est_unit||'BUSHELS').toUpperCase(),
-           normPhone(driver_phone)||null, probe);
-
+ const info = db.prepare(`
+  INSERT INTO slot_reservations
+    (site_id, date, slot_time, driver_name, license_plate, trucking_company, vendor_name,
+     farm_or_ticket, est_amount, est_unit, driver_phone, queue_code, status)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'reserved')
+  RETURNING id
+`).get(
+  site_id, date, slot_time,
+  driver_name || null,
+  license_plate || null,
+  trucking_company || null,
+  vendor_name || null,
+  farm_or_ticket || null,
+  est_amount ?? null,
+  (est_unit || 'BUSHELS').toUpperCase(),
+  phoneNorm || null,
+  code
+);
+    
     db.prepare(`
       UPDATE time_slots
          SET reserved_truck_id=?, reserved_at=CURRENT_TIMESTAMP
