@@ -519,6 +519,7 @@ app.get('/api/appointments', (req, res) => {
         r.id               AS reservation_id,
         r.driver_name,
         r.license_plate,
+        r.trucking_company,
         r.vendor_name,
         r.farm_or_ticket,
         r.est_amount,
@@ -610,23 +611,24 @@ app.post('/api/slots/confirm', async (req, res) => {
   if (!slot) return res.status(410).json({ error:'hold expired or invalid' });
 
   const {
-    driver_name, license_plate, vendor_name,
-    farm_or_ticket, est_amount, est_unit, driver_phone
-  } = req.body || {};
+  driver_name, license_plate, trucking_company, vendor_name,
+  farm_or_ticket, est_amount, est_unit, driver_phone,
+  trucking_company     
+} = req.body || {};
 
   const probe = fourDigit();
 
   const info = db.prepare(`
     INSERT INTO slot_reservations
-      (site_id,date,slot_time,driver_name,license_plate,vendor_name,
-       farm_or_ticket,est_amount,est_unit,driver_phone,queue_code,status)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?, 'reserved')
+      (site_id,date,slot_time,driver_name,license_plate,trucking_company,vendor_name,
+       farm_or_ticket,est_amount,est_unit,driver_phone, queue_code, status)
+VALUES (?,?,?,?,?,?,?,?,?,?,?, 'reserved', ?)
     RETURNING id
   `).get(
     slot.site_id, slot.date, slot.slot_time,
-    driver_name || null, license_plate || null, vendor_name || null,
+    driver_name || null, license_plate || null, trucking_company || null, vendor_name || null,
     farm_or_ticket || null, est_amount || null, (est_unit || 'BUSHELS').toUpperCase(),
-    normPhone(driver_phone) || null, probe
+    normPhone(driver_phone) || null, probe, (trucking_company || null)
   );
 
   db.prepare(`
@@ -653,7 +655,7 @@ app.post('/api/slots/probe-upsert', async (req, res) => {
   try {
     const {
       site_id, date, slot_time, reservation_id,
-      driver_name, license_plate, vendor_name,
+      driver_name, license_plate,trucking_company, vendor_name,
       farm_or_ticket, est_amount, est_unit,
       driver_phone, notify = false, reason = ''
     } = req.body || {};
@@ -685,13 +687,14 @@ app.post('/api/slots/probe-upsert', async (req, res) => {
 
         db.prepare(`
           UPDATE slot_reservations SET
-            driver_name = ?, license_plate = ?, vendor_name = ?,
+            driver_name = ?, license_plate = ?,trucking_company = ?, vendor_name = ?,
             farm_or_ticket = ?, est_amount = ?, est_unit = ?,
             driver_phone = ?
           WHERE id = ?
         `).run(
           driver_name || null,
           license_plate || null,
+          trucking_company || null,
           vendor_name || null,
           farm_or_ticket || null,
           est_amount ?? null,
@@ -714,9 +717,9 @@ app.post('/api/slots/probe-upsert', async (req, res) => {
 
         const info = db.prepare(`
           INSERT INTO slot_reservations
-            (site_id, date, slot_time, driver_name, license_plate, vendor_name,
+            (site_id, date, slot_time, driver_name, license_plate, trucking_company, vendor_name,
              farm_or_ticket, est_amount, est_unit, driver_phone, queue_code, status)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?, 'reserved')
+VALUES (?,?,?,?,?,?,?,?,?,?,?, 'reserved', ?)
           RETURNING id
         `).get(
           site_id, date, slot_time,
@@ -834,7 +837,7 @@ app.post('/api/admin/reserve', async (req, res) => {
   try {
     // (optional) could check session_role === 'admin' here if you wire cookie-based gating on the UI
     const { site_id, date, slot_time, driver_name, driver_phone,
-            license_plate, vendor_name, farm_or_ticket,
+            license_plate, trucking_company, vendor_name, farm_or_ticket,
             est_amount, est_unit, queue_code } = req.body || {};
     if (!site_id || !date || !slot_time) {
       return res.status(400).json({ error:'site_id, date, slot_time required' });
@@ -844,12 +847,12 @@ app.post('/api/admin/reserve', async (req, res) => {
 
     const info = db.prepare(`
       INSERT INTO slot_reservations
-        (site_id,date,slot_time,driver_name,license_plate,vendor_name,
+        (site_id,date,slot_time,driver_name,license_plate,trucking_company, vendor_name,
          farm_or_ticket,est_amount,est_unit,driver_phone,queue_code,status)
       VALUES (?,?,?,?,?,?,?,?,?,?,?, 'reserved')
       RETURNING id
     `).get(site_id, date, slot_time,
-           driver_name||null, license_plate||null, vendor_name||null,
+           driver_name||null, license_plate||null, trucking_company || null, vendor_name||null,
            farm_or_ticket||null, est_amount||null, (est_unit||'BUSHELS').toUpperCase(),
            normPhone(driver_phone)||null, probe);
 
@@ -876,7 +879,7 @@ app.post('/api/admin/reserve', async (req, res) => {
 app.post('/api/admin/update-reservation', async (req, res) => {
   try {
     const { reservation_id, driver_name, driver_phone, license_plate,
-            vendor_name, farm_or_ticket, est_amount, est_unit } = req.body || {};
+        trucking_company, vendor_name, farm_or_ticket, est_amount, est_unit, } = req.body || {};
     if (!reservation_id) return res.status(400).json({ error:'reservation_id required' });
 
     const row = db.prepare(`SELECT * FROM slot_reservations WHERE id=?`).get(reservation_id);
@@ -884,10 +887,10 @@ app.post('/api/admin/update-reservation', async (req, res) => {
 
     db.prepare(`
       UPDATE slot_reservations
-         SET driver_name=?, driver_phone=?, license_plate=?,
+         SET driver_name=?, driver_phone=?, license_plate=?, trucking_company=?,
              vendor_name=?, farm_or_ticket=?, est_amount=?, est_unit=?
        WHERE id=?
-    `).run(driver_name, normPhone(driver_phone), license_plate,
+    `).run(driver_name, normPhone(driver_phone), license_plate, trucking_company,
            vendor_name, farm_or_ticket, est_amount, (est_unit||'BUSHELS').toUpperCase(), reservation_id);
 
     if (driver_phone) {
@@ -1092,7 +1095,7 @@ app.post('/api/driver/manage/update', async (req, res) => {
   try {
     const {
       reservation_id, phone, probe_code,
-      driver_name, license_plate, vendor_name,
+      driver_name, license_plate, trucking_company, vendor_name,
       farm_or_ticket, est_amount, est_unit
     } = req.body || {};
 
@@ -1117,6 +1120,7 @@ app.post('/api/driver/manage/update', async (req, res) => {
 
     if (driver_name !== undefined)   push('driver_name', driver_name || null);
     if (license_plate !== undefined) push('license_plate', license_plate || null);
+    if (trucking_company !== undefined) push('trucking_company', trucking_company || null);
     if (vendor_name !== undefined)   push('vendor_name', vendor_name || null);
     if (farm_or_ticket !== undefined)push('farm_or_ticket', farm_or_ticket || null);
     if (est_amount !== undefined)    push('est_amount', est_amount ?? null);
