@@ -836,52 +836,79 @@ app.post('/api/slots/reassign', (req, res) => {
 // ------------------------- Admin: reserve/update (for completeness) ----------
 app.post('/api/admin/reserve', async (req, res) => {
   try {
-    // (optional) could check session_role === 'admin' here if you wire cookie-based gating on the UI
-    const { site_id, date, slot_time, driver_name, driver_phone,
-            license_plate, trucking_company, vendor_name, farm_or_ticket,
-            est_amount, est_unit, queue_code } = req.body || {};
+    const {
+      site_id, date, slot_time,
+      driver_name, driver_phone,
+      license_plate, trucking_company,
+      vendor_name, farm_or_ticket,
+      est_amount, est_unit,
+      queue_code
+    } = req.body || {};
+
     if (!site_id || !date || !slot_time) {
-      return res.status(400).json({ error:'site_id, date, slot_time required' });
+      return res.status(400).json({ error: 'site_id, date, slot_time required' });
     }
 
-    const probe = queue_code || String(Math.floor(1000 + Math.random()*9000));
+    const phone = driver_phone ? normPhone(driver_phone) : null;
+    const probe = (queue_code && /^\d{4}$/.test(String(queue_code)))
+      ? String(queue_code)
+      : fourDigit();
 
- const info = db.prepare(`
-  INSERT INTO slot_reservations
-    (site_id, date, slot_time, driver_name, license_plate, trucking_company, vendor_name,
-     farm_or_ticket, est_amount, est_unit, driver_phone, queue_code, status)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'reserved')
-  RETURNING id
-`).get(
-  site_id, date, slot_time,
-  driver_name || null,
-  license_plate || null,
-  trucking_company || null,
-  vendor_name || null,
-  farm_or_ticket || null,
-  est_amount ?? null,
-  (est_unit || 'BUSHELS').toUpperCase(),
-  phoneNorm || null,
-  code
-);
-    
-    db.prepare(`
-      UPDATE time_slots
-         SET reserved_truck_id=?, reserved_at=CURRENT_TIMESTAMP
-       WHERE site_id=? AND date=? AND slot_time=?
-    `).run(info.id, site_id, date, slot_time);
+    // Single transaction: ensure slot exists -> insert reservation -> mark slot reserved.
+    const tx = db.transaction(() => {
+      // Ensure the time slot row exists so the update below will work.
+      db.prepare(`
+        INSERT OR IGNORE INTO time_slots (site_id, date, slot_time, is_workin)
+        VALUES (?, ?, ?, 0)
+      `).run(site_id, date, slot_time);
+
+      // Insert reservation (13 columns → 13 values).
+      const info = db.prepare(`
+        INSERT INTO slot_reservations
+          (site_id, date, slot_time,
+           driver_name, license_plate, trucking_company, vendor_name,
+           farm_or_ticket, est_amount, est_unit, driver_phone,
+           queue_code, status)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        RETURNING id
+      `).get(
+        site_id, date, slot_time,
+        driver_name || null, license_plate || null, trucking_company || null, vendor_name || null,
+        farm_or_ticket || null, (est_amount ?? null),
+        (est_unit || 'BUSHELS').toUpperCase(),
+        phone,
+        probe, 'reserved'
+      );
+
+      // Mark slot reserved & clear any hold state.
+      db.prepare(`
+        UPDATE time_slots
+           SET reserved_truck_id = ?, reserved_at = CURRENT_TIMESTAMP,
+               hold_token = NULL, hold_expires_at = NULL
+         WHERE site_id = ? AND date = ? AND slot_time = ?
+      `).run(info.id, site_id, date, slot_time);
+
+      return info.id;
+    });
+
+    const reservation_id = tx();
+
+    // Courtesy SMS (non-fatal if Twilio isn’t configured).
+    if (phone) {
+      try {
+        await sendSMS(
+          phone,
+          `Cargill: Reserved ${date} at ${slot_time}. Probe code: ${probe}. Reply STOP to opt out.`
+        );
+      } catch (_) {}
+    }
 
     emitSlotsChanged(site_id, date);
-
-    if (driver_phone) {
-      const msg = `Cargill: Reserved ${date} at ${slot_time}. Probe code: ${probe}. Reply STOP to opt out.`;
-      await sendSMS(driver_phone, msg);
-    }
-
-    res.json({ ok:true, reservation_id: info.id, queue_code: probe });
+    res.json({ ok: true, reservation_id, queue_code: probe });
   } catch (e) {
-    console.error('admin-reserve', e);
-    res.status(500).json({ error: 'server error' });
+    console.error('/api/admin/reserve', e);
+    // Send a little detail during testing; safe to remove later.
+    res.status(500).json({ error: 'server error', detail: String(e.message || e) });
   }
 });
 
