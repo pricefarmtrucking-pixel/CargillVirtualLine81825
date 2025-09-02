@@ -129,7 +129,7 @@
       </tr>
     </thead>
     <tbody id="tbody">
-      <tr><td colspan="12"><div class="spinner"></div></td></tr><!-- colspan bumped -->
+      <tr><td colspan="12"><div class="spinner"></div></td></tr><!-- colspan 12 -->
     </tbody>
   </table>
 </div>
@@ -214,7 +214,7 @@ const notifyText    = $('#notifyText');
 const addStart    = $('#addStart');
 const addEnd      = $('#addEnd');
 const addLoads    = $('#addLoads');
-const addInterval = $('#addInterval');
+const addInterval = $('#addInterval'];
 const addKind     = $('#addKind');
 const addTimesBtn = $('#addTimesBtn');
 
@@ -237,6 +237,16 @@ function todayISO(){ const d=new Date(); d.setMinutes(d.getMinutes()-d.getTimezo
 dateSel.value = todayISO();
 
 let rows = []; // {slot_time, is_workin, disabled, reservation_id, ...}
+
+// --- helpers ---
+function normPhone(p){
+  const d = String(p||'').replace(/\D/g,'');
+  if(!d) return null;
+  if(d.length===10) return '+1'+d;
+  if(d.length===11 && d.startsWith('1')) return '+'+d;
+  if(d.length===12 && d.startsWith('+1')) return d;
+  return '+1'+d.slice(-10);
+}
 
 // ------------ fetch + render -------------
 async function load() {
@@ -310,21 +320,13 @@ async function bulkDisableEnable(disabled) {
   const picks = selectedTimes().filter(x => !x.reservation_id).map(x=>x.time);
   if (!picks.length) { alert('Select open rows to ' + (disabled?'disable':'enable') + '.'); return; }
 
-  if (disabled) {
-    const r = await fetch('/api/slots/disable', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ site_id, date, slot_times: picks })
-    });
-    const j = await r.json();
-    if (!j.ok) alert(j.error || 'Server error');
-  } else {
-    const r = await fetch('/api/slots/enable', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ site_id, date, slot_times: picks })
-    });
-    const j = await r.json();
-    if (!j.ok) alert(j.error || 'Server error');
-  }
+  const url = disabled ? '/api/slots/disable' : '/api/slots/enable';
+  const r = await fetch(url, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ site_id, date, slot_times: picks })
+  });
+  const j = await r.json();
+  if (!j.ok) alert(j.error || 'Server error');
   await load();
 }
 
@@ -427,7 +429,7 @@ function closeModal(){ editBack.style.display='none'; editing=null; }
 async function saveModal() {
   const payload = {
     driver_name : f_driver.value.trim() || null,
-    driver_phone: f_phone.value.trim()  || null,
+    driver_phone: normPhone(f_phone.value.trim()) || null,
     license_plate: f_plate.value.trim() || null,
     trucking_company: f_trucking.value.trim() || null, // NEW
     vendor_name:  f_vendor.value.trim() || null,
